@@ -1,0 +1,22 @@
+name = "jarvis-proxi"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# מסד האמת של הזיכרון (SQLite ב-edge)
+[[d1_databases]]
+binding = "DB"
+database_name = "jarvis-memory"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+# אינדקס וקטורי לשליפה סמנטית
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "jarvis-memories"
+
+# Workers AI, ל-embeddings בעברית (bge-m3, 1024 מימדים)
+[ai]
+binding = "AI"
+
+# לולאת תחזוקה לילית (03:00 UTC)
+[triggers]
+crons = ["0 3 * * *"]
