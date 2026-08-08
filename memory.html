@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>הזיכרון של Jarvis</title>
+<style>
+  :root{
+    --bg:#070d18; --panel:#0e1626; --panel2:#111c30;
+    --line:#1e2c44; --text:#dce6f5; --muted:#7f92ad;
+    --cyan:#5fd0ff; --cyan-dim:#2b6c8a;
+    --green:#57d9a3; --amber:#e7b45a; --purple:#b58cf0; --red:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 50% -10%, #0d1b30 0%, var(--bg) 60%);
+    color:var(--text); font-family:"Segoe UI",Arial,sans-serif; min-height:100vh;
+    padding:20px 14px 60px;
+  }
+  .wrap{max-width:760px; margin:0 auto}
+  header{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px}
+  h1{font-size:20px; margin:0; letter-spacing:.5px}
+  h1 .dot{color:var(--cyan)}
+  .count{color:var(--muted); font-size:13px; margin:2px 0 18px}
+  .btn{
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:9px 14px; font-size:14px; cursor:pointer; transition:.15s;
+  }
+  .btn:hover{border-color:var(--cyan-dim); color:var(--cyan)}
+  .btn:active{transform:translateY(1px)}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px; margin-bottom:12px; position:relative; transition:.25s;
+  }
+  .card.removing{opacity:0; transform:translateX(20px)}
+  .card .top{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap}
+  .badge{font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px; border:1px solid}
+  .b-semantic{color:var(--cyan); border-color:var(--cyan-dim); background:#0c2130}
+  .b-preference{color:var(--green); border-color:#245c47; background:#0c231b}
+  .b-episodic{color:var(--amber); border-color:#5c4a24; background:#231d0c}
+  .b-procedural{color:var(--purple); border-color:#463a5c; background:#1a1423}
+  .subject{color:var(--muted); font-size:12px; font-family:monospace; direction:ltr}
+  .content{font-size:15px; line-height:1.5; margin:2px 0}
+  .meta{color:var(--muted); font-size:12px; margin-top:8px; display:flex; gap:14px; flex-wrap:wrap}
+  .del{
+    position:absolute; inset-inline-start:12px; top:12px;
+    background:transparent; border:1px solid var(--line); color:var(--muted);
+    width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:15px; line-height:1; transition:.15s;
+  }
+  .del:hover{border-color:var(--red); color:var(--red)}
+  .confirm{display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted)}
+  .confirm .yes{color:var(--red); cursor:pointer; font-weight:600}
+  .confirm .no{color:var(--cyan); cursor:pointer}
+
+  .state{text-align:center; color:var(--muted); padding:40px 10px; font-size:15px; line-height:1.6}
+  .state .u{direction:ltr; font-family:monospace; font-size:12px; color:var(--cyan-dim)}
+  .spinner{width:26px; height:26px; border:3px solid var(--line); border-top-color:var(--cyan);
+    border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>הזיכרון של <span class="dot">J.A.R.V.I.S</span></h1>
+    </div>
+    <button class="btn" id="refresh">רענן</button>
+  </header>
+  <div class="count" id="count"></div>
+  <div id="list"></div>
+</div>
+
+<script>
+  const WORKER = "https://jarvis-proxi.ben-mor-04-2012.workers.dev";
+
+  const TYPE_LABEL = {
+    semantic:   "עובדה",
+    preference: "העדפה",
+    episodic:   "אירוע",
+    procedural: "שיטה"
+  };
+
+  const listEl  = document.getElementById("list");
+  const countEl = document.getElementById("count");
+  const refreshEl = document.getElementById("refresh");
+
+  function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  function fmtDate(ms){
+    if(!ms) return "";
+    try{ return new Date(Number(ms)).toLocaleDateString("he-IL", {day:"2-digit",month:"2-digit",year:"numeric"}); }
+    catch(_){ return ""; }
+  }
+
+  function showState(html){
+    listEl.innerHTML = '<div class="state">' + html + '</div>';
+    countEl.textContent = "";
+  }
+
+  async function load(){
+    showState('<div class="spinner"></div>טוען זיכרונות...');
+    try{
+      const res = await fetch(WORKER + "/memory", { method:"GET" });
+      if(!res.ok) throw new Error("status " + res.status);
+      const data = await res.json();
+      const mems = Array.isArray(data.memories) ? data.memories : [];
+      render(mems);
+    }catch(err){
+      showState(
+        'לא הצלחתי לטעון את הזיכרונות.<br>' +
+        'ודא שה-Worker פעיל בכתובת:<br><span class="u">' + esc(WORKER) + '/memory</span><br><br>' +
+        '<span style="font-size:12px">שגיאה: ' + esc(err.message) + '</span>'
+      );
+    }
+  }
+
+  function render(mems){
+    if(!mems.length){
+      showState('אין עדיין זיכרונות שמורים.<br>דבר עם Jarvis, והם יופיעו כאן.');
+      return;
+    }
+    // מיון: החשובים (salience גבוה) קודם, ואז לפי תאריך
+    mems.sort((a,b)=> (b.salience||0)-(a.salience||0) || (b.created_at||0)-(a.created_at||0));
+    countEl.textContent = mems.length + " זיכרונות שמורים";
+    listEl.innerHTML = "";
+    for(const m of mems) listEl.appendChild(cardFor(m));
+  }
+
+  function cardFor(m){
+    const type = m.type || "semantic";
+    const label = TYPE_LABEL[type] || type;
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<button class="del" title="מחק">&times;</button>' +
+      '<div class="top">' +
+        '<span class="badge b-' + esc(type) + '">' + esc(label) + '</span>' +
+        (m.subject ? '<span class="subject">' + esc(m.subject) + '</span>' : '') +
+      '</div>' +
+      '<div class="content">' + esc(m.content) + '</div>' +
+      '<div class="meta">' +
+        '<span>חשיבות: ' + esc(m.salience ?? "-") + '/5</span>' +
+        (m.created_at ? '<span>' + fmtDate(m.created_at) + '</span>' : '') +
+      '</div>';
+
+    const delBtn = card.querySelector(".del");
+    delBtn.addEventListener("click", ()=> askDelete(card, m, delBtn));
+    return card;
+  }
+
+  function askDelete(card, m, delBtn){
+    delBtn.style.display = "none";
+    const bar = document.createElement("div");
+    bar.className = "confirm";
+    bar.style.marginTop = "10px";
+    bar.innerHTML = 'למחוק את הזיכרון הזה? <span class="yes">מחק</span> <span class="no">ביטול</span>';
+    card.appendChild(bar);
+    bar.querySelector(".no").onclick = ()=>{ bar.remove(); delBtn.style.display = ""; };
+    bar.querySelector(".yes").onclick = ()=> doDelete(card, m, bar, delBtn);
+  }
+
+  async function doDelete(card, m, bar, delBtn){
+    bar.innerHTML = "מוחק...";
+    try{
+      const res = await fetch(WORKER + "/memory/" + encodeURIComponent(m.id), { method:"DELETE" });
+      if(!res.ok) throw new Error("status " + res.status);
+      card.classList.add("removing");
+      setTimeout(()=>{
+        card.remove();
+        const remaining = listEl.querySelectorAll(".card").length;
+        if(!remaining) render([]);
+        else countEl.textContent = remaining + " זיכרונות שמורים";
+      }, 250);
+    }catch(err){
+      bar.innerHTML = 'המחיקה נכשלה (' + esc(err.message) + '). <span class="no">סגור</span>';
+      bar.querySelector(".no").onclick = ()=>{ bar.remove(); delBtn.style.display = ""; };
+    }
+  }
+
+  refreshEl.addEventListener("click", load);
+  load();
+</script>
+</body>
+</html>
