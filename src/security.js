@@ -38,7 +38,9 @@ export function corsHeaders(request, env) {
     .filter(Boolean);
   const allowed = configured.length ? configured : DEFAULT_ALLOWED;
   const origin = request.headers.get("origin") || "";
-  const allowOrigin = allowed.includes(origin) ? origin : allowed[0];
+  // Electron sends "null" or "file://" as origin; allow desktop app access
+  const isDesktop = origin === "null" || origin === "" || origin.startsWith("file://");
+  const allowOrigin = allowed.includes(origin) ? origin : isDesktop ? "*" : allowed[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Vary": "Origin",

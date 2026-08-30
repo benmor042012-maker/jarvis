@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS Desktop</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0e17; --surface: #111827; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8; --accent: #3b82f6;
+    --safe: #22c55e; --ask: #eab308; --risk: #f97316; --blocked: #ef4444;
+    --orb-glow: rgba(59,130,246,0.3);
+  }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header-controls { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+  .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .status-badge.listening { background: rgba(34,197,94,0.15); color: var(--safe); }
+  .status-badge.active { background: rgba(59,130,246,0.15); color: var(--accent); }
+  .status-badge.paused { background: rgba(148,163,184,0.15); color: var(--text-dim); }
+  .status-badge.stopped { background: rgba(239,68,68,0.15); color: var(--blocked); }
+  .status-badge.processing { background: rgba(234,179,8,0.15); color: var(--ask); }
+  .mode-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-dim); }
+  .mode-badge:hover { border-color: var(--accent); }
+  .btn-icon { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .btn-icon:hover { background: var(--surface); border-color: var(--accent); color: var(--text); }
+  .btn-stop { background: var(--blocked); color: white; border-color: var(--blocked); font-weight: 700; font-size: 12px; width: auto; padding: 0 12px; }
+  .btn-stop:hover { opacity: 0.9; }
+
+  /* Chat area */
+  .chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 80%; padding: 12px 16px; border-radius: 16px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-right-radius: 16px; border-bottom-left-radius: 4px; }
+  .msg.system { align-self: center; background: rgba(59,130,246,0.1); color: var(--accent); font-size: 12px; padding: 6px 16px; border-radius: 20px; }
+  .msg .tool-trace { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+  .msg .tool-trace .tool-item { margin: 2px 0; }
+  .msg .tool-item.blocked { color: var(--blocked); }
+
+  /* Input area */
+  .input-area { padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+  .input-area input { flex: 1; padding: 10px 16px; border-radius: 24px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; outline: none; }
+  .input-area input:focus { border-color: var(--accent); }
+  .input-area button { padding: 10px 20px; border-radius: 24px; border: none; background: var(--accent); color: white; font-size: 14px; cursor: pointer; }
+  .input-area button:hover { opacity: 0.9; }
+  .input-area button:disabled { opacity: 0.5; cursor: default; }
+
+  /* Approval dialog */
+  .approval-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .approval-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; max-width: 500px; width: 90%; }
+  .approval-dialog h3 { margin-bottom: 12px; font-size: 16px; }
+  .approval-detail { background: var(--bg); border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 13px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+  .approval-level { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+  .approval-level.ask { background: rgba(234,179,8,0.15); color: var(--ask); }
+  .approval-level.high { background: rgba(249,115,22,0.15); color: var(--risk); }
+  .approval-buttons { display: flex; gap: 12px; margin-top: 16px; }
+  .approval-buttons button { flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; }
+  .btn-approve { background: var(--safe); color: white; }
+  .btn-deny { background: var(--blocked); color: white; }
+
+  /* Settings panel */
+  .settings-panel { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 50; overflow-y: auto; padding: 20px; }
+  .settings-panel.visible { display: block; }
+  .settings-panel h2 { margin-bottom: 16px; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .setting-row label { font-size: 14px; }
+  .setting-row input[type="text"], .setting-row input[type="password"] { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 300px; }
+  .setting-row select { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+
+  /* Audit panel */
+  .audit-panel { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 50; overflow-y: auto; padding: 20px; }
+  .audit-panel.visible { display: block; }
+  .audit-entry { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; font-family: monospace; }
+  .audit-entry .time { color: var(--text-dim); }
+  .audit-entry .action { color: var(--accent); }
+  .audit-entry .result { font-weight: 600; }
+  .audit-entry .result.SUCCESS { color: var(--safe); }
+  .audit-entry .result.BLOCKED { color: var(--blocked); }
+  .audit-entry .result.ERROR { color: var(--risk); }
+
+  .hidden { display: none !important; }
+  .orb-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-left: 8px; }
+  .orb-indicator.listening { background: var(--safe); box-shadow: 0 0 8px var(--safe); animation: pulse 2s infinite; }
+  .orb-indicator.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 0.5s infinite; }
+  .orb-indicator.processing { background: var(--ask); box-shadow: 0 0 8px var(--ask); }
+  .orb-indicator.paused { background: var(--text-dim); }
+  .orb-indicator.stopped { background: var(--blocked); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div style="display:flex;align-items:center;gap:8px">
+    <h1>JARVIS</h1>
+    <span class="orb-indicator listening" id="orbIndicator"></span>
+    <span class="status-badge listening" id="statusBadge">Listening</span>
+  </div>
+  <div class="header-controls">
+    <span class="mode-badge" id="modeBadge" title="Click to toggle mode">SAFE</span>
+    <button class="btn-icon" id="btnSettings" title="Settings">S</button>
+    <button class="btn-icon" id="btnAudit" title="Audit Log">L</button>
+    <button class="btn-icon" id="btnMic" title="Toggle microphone">M</button>
+    <button class="btn-icon btn-stop" id="btnStop" title="STOP JARVIS">STOP</button>
+  </div>
+</div>
+
+<div class="chat" id="chat">
+  <div class="msg system">JARVIS Desktop ready. Say "JARVIS" to start a voice command.</div>
+</div>
+
+<div class="input-area">
+  <input type="text" id="inputField" placeholder="Type a message or say 'JARVIS'..." autocomplete="off">
+  <button id="btnSend">Send</button>
+</div>
+
+<!-- Approval dialog -->
+<div class="approval-overlay hidden" id="approvalOverlay">
+  <div class="approval-dialog">
+    <h3>JARVIS wants to perform an action</h3>
+    <span class="approval-level ask" id="approvalLevel">ASK</span>
+    <div id="approvalInfo"></div>
+    <div class="approval-detail" id="approvalDetail"></div>
+    <div class="approval-buttons">
+      <button class="btn-approve" id="btnApprove">Approve</button>
+      <button class="btn-deny" id="btnDeny">Deny</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings panel -->
+<div class="settings-panel" id="settingsPanel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h2>Settings</h2>
+    <button class="btn-icon" id="btnCloseSettings">X</button>
+  </div>
+  <div class="setting-row">
+    <label>Anthropic API Key</label>
+    <input type="password" id="cfgApiKey" placeholder="sk-ant-...">
+  </div>
+  <div class="setting-row">
+    <label>Backend URL</label>
+    <input type="text" id="cfgBackendUrl">
+  </div>
+  <div class="setting-row">
+    <label>User ID</label>
+    <input type="text" id="cfgUserId">
+  </div>
+  <div class="setting-row">
+    <label>Model</label>
+    <select id="cfgModel">
+      <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>Mode</label>
+    <select id="cfgMode">
+      <option value="safe">Safe Mode</option>
+      <option value="assistant">Assistant Mode</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>Wake Word</label>
+    <select id="cfgWakeWord">
+      <option value="true">Enabled</option>
+      <option value="false">Disabled</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>TTS (Text-to-Speech)</label>
+    <select id="cfgTts">
+      <option value="true">Enabled</option>
+      <option value="false">Disabled</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>STT Language</label>
+    <select id="cfgLang">
+      <option value="he-IL">Hebrew</option>
+      <option value="en-US">English</option>
+      <option value="ar-SA">Arabic</option>
+    </select>
+  </div>
+  <div style="margin-top:16px">
+    <button id="btnSaveSettings" style="padding:10px 24px;border-radius:8px;border:none;background:var(--accent);color:white;cursor:pointer">Save</button>
+  </div>
+</div>
+
+<!-- Audit panel -->
+<div class="audit-panel" id="auditPanel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h2>Audit Log</h2>
+    <button class="btn-icon" id="btnCloseAudit">X</button>
+  </div>
+  <div id="auditList"></div>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("inputField");
+const btnSend = document.getElementById("btnSend");
+const statusBadge = document.getElementById("statusBadge");
+const orbIndicator = document.getElementById("orbIndicator");
+const modeBadge = document.getElementById("modeBadge");
+const approvalOverlay = document.getElementById("approvalOverlay");
+let history = [];
+let sending = false;
+
+function addMsg(role, text, toolTrace) {
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  if (toolTrace?.length) {
+    const tr = document.createElement("div");
+    tr.className = "tool-trace";
+    for (const t of toolTrace) {
+      const item = document.createElement("div");
+      item.className = `tool-item${t.blocked ? " blocked" : ""}`;
+      item.textContent = t.blocked ? `[blocked] ${t.tool}: ${t.reason}` : `[${t.tool}] ${t.output?.slice(0, 80) || "ok"}`;
+      tr.appendChild(item);
+    }
+    div.appendChild(tr);
+  }
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || sending) return;
+  input.value = "";
+  sending = true;
+  btnSend.disabled = true;
+  addMsg("user", text);
+  history.push({ role: "user", content: text });
+  try {
+    const res = await window.jarvis.sendMessage(text, history.slice(-20));
+    if (res.reply) {
+      addMsg("assistant", res.reply, res.toolTrace);
+      history.push({ role: "assistant", content: res.reply });
+    }
+    if (res.aborted) addMsg("system", "Action stopped.");
+  } catch (e) {
+    addMsg("system", `Error: ${e.message || e}`);
+  }
+  sending = false;
+  btnSend.disabled = false;
+  input.focus();
+}
+
+btnSend.addEventListener("click", send);
+input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+
+// Voice state
+function updateState(state) {
+  const labels = { stopped: "Stopped", listening: "Listening", paused: "Paused", active: "Active", processing: "Processing" };
+  statusBadge.textContent = labels[state] || state;
+  statusBadge.className = `status-badge ${state}`;
+  orbIndicator.className = `orb-indicator ${state}`;
+}
+
+window.jarvis.onVoiceState(updateState);
+window.jarvis.onWakeword(() => { addMsg("system", "Wake word detected — listening..."); });
+window.jarvis.onVoiceCommand((text) => {
+  addMsg("user", text);
+  history.push({ role: "user", content: text });
+});
+window.jarvis.onAgentReply(({ reply, toolTrace, aborted }) => {
+  if (reply) {
+    addMsg("assistant", reply, toolTrace);
+    history.push({ role: "assistant", content: reply });
+  }
+  if (aborted) addMsg("system", "Action stopped.");
+});
+
+// Approval
+window.jarvis.onRequestApproval((info) => {
+  approvalOverlay.classList.remove("hidden");
+  document.getElementById("approvalLevel").textContent = info.level === "needs_approval" ? "ASK" : "HIGH RISK";
+  document.getElementById("approvalLevel").className = `approval-level ${info.level === "needs_approval" ? "ask" : "high"}`;
+  document.getElementById("approvalInfo").textContent = `Tool: ${info.tool}\nAction: ${info.action}`;
+  document.getElementById("approvalDetail").textContent = JSON.stringify(info.input, null, 2);
+});
+document.getElementById("btnApprove").addEventListener("click", () => { approvalOverlay.classList.add("hidden"); window.jarvis.approvalResponse(true); });
+document.getElementById("btnDeny").addEventListener("click", () => { approvalOverlay.classList.add("hidden"); window.jarvis.approvalResponse(false); });
+
+// Emergency stop
+document.getElementById("btnStop").addEventListener("click", () => { window.jarvis.emergencyStop(); });
+window.jarvis.onEmergencyStop(() => { addMsg("system", "JARVIS stopped."); updateState("stopped"); });
+
+// Mic toggle
+document.getElementById("btnMic").addEventListener("click", async () => {
+  const state = await window.jarvis.getVoiceState();
+  if (state === "listening" || state === "active") await window.jarvis.voicePause();
+  else await window.jarvis.voiceResume();
+});
+
+// Mode toggle
+modeBadge.addEventListener("click", async () => {
+  const cfg = await window.jarvis.getConfig();
+  const newMode = cfg.mode === "safe" ? "assistant" : "safe";
+  await window.jarvis.setMode(newMode);
+  modeBadge.textContent = newMode.toUpperCase();
+});
+
+// Settings
+document.getElementById("btnSettings").addEventListener("click", async () => {
+  const cfg = await window.jarvis.getConfig();
+  document.getElementById("cfgApiKey").value = cfg.anthropicApiKey || "";
+  document.getElementById("cfgBackendUrl").value = cfg.backendUrl || "";
+  document.getElementById("cfgUserId").value = cfg.userId || "";
+  document.getElementById("cfgModel").value = cfg.model || "";
+  document.getElementById("cfgMode").value = cfg.mode || "safe";
+  document.getElementById("cfgWakeWord").value = String(cfg.wakeWordEnabled);
+  document.getElementById("cfgTts").value = String(cfg.ttsEnabled);
+  document.getElementById("cfgLang").value = cfg.sttLang || "he-IL";
+  document.getElementById("settingsPanel").classList.add("visible");
+});
+document.getElementById("btnCloseSettings").addEventListener("click", () => { document.getElementById("settingsPanel").classList.remove("visible"); });
+document.getElementById("btnSaveSettings").addEventListener("click", async () => {
+  await window.jarvis.updateConfig({
+    anthropicApiKey: document.getElementById("cfgApiKey").value,
+    backendUrl: document.getElementById("cfgBackendUrl").value,
+    userId: document.getElementById("cfgUserId").value,
+    model: document.getElementById("cfgModel").value,
+    mode: document.getElementById("cfgMode").value,
+    wakeWordEnabled: document.getElementById("cfgWakeWord").value === "true",
+    ttsEnabled: document.getElementById("cfgTts").value === "true",
+    sttLang: document.getElementById("cfgLang").value,
+  });
+  modeBadge.textContent = document.getElementById("cfgMode").value.toUpperCase();
+  document.getElementById("settingsPanel").classList.remove("visible");
+});
+
+// Audit
+document.getElementById("btnAudit").addEventListener("click", async () => {
+  const entries = await window.jarvis.getAudit(200);
+  const list = document.getElementById("auditList");
+  list.innerHTML = "";
+  for (const e of entries.reverse()) {
+    const div = document.createElement("div");
+    div.className = "audit-entry";
+    div.innerHTML = `<span class="time">${e.time?.slice(11, 19) || ""}</span> <span class="action">${e.action}</span> ${e.tool ? `[${e.tool}]` : ""} ${e.target ? e.target.slice(0, 60) : ""} <span class="result ${e.result}">${e.result}</span>${e.userApproval !== null ? ` (approval: ${e.userApproval})` : ""}`;
+    list.appendChild(div);
+  }
+  document.getElementById("auditPanel").classList.add("visible");
+});
+document.getElementById("btnCloseAudit").addEventListener("click", () => { document.getElementById("auditPanel").classList.remove("visible"); });
+window.jarvis.onShowAudit(() => { document.getElementById("btnAudit").click(); });
+
+// Init
+(async () => {
+  const cfg = await window.jarvis.getConfig();
+  modeBadge.textContent = (cfg.mode || "safe").toUpperCase();
+  const state = await window.jarvis.getVoiceState();
+  updateState(state);
+  if (!cfg.anthropicApiKey) {
+    addMsg("system", "API key not set. Open Settings (S button) to configure your Anthropic API key.");
+  }
+})();
+</script>
+</body>
+</html>

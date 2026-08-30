@@ -21,11 +21,12 @@ import {
   touchAccessed,
   extractAndStore,
   consolidate,
+  rememberExplicit,
 } from "./memory.js";
 import { runAgent } from "./agent.js";
 import { checkRateLimit, corsHeaders } from "./security.js";
 import { costReport } from "./cost_guard.js";
-import { reminder_poll, tickReminders } from "./tools/reminders.js";
+import { reminder_poll, reminder_set, reminder_list, reminder_cancel, tickReminders } from "./tools/reminders.js";
 
 const BASE_PERSONA = `אתה JARVIS, עוזר AI אישי חכם, שנון ורגוע בסגנון סרטי איירון מן. אתה עונה תמיד בעברית, בקצרה ולעניין (1-3 משפטים בדרך כלל אלא אם התבקש הסבר ארוך), בביטחון עצמי מסוים ומעט הומור יבש, בלי להיות מוגזם. אתה יכול לפנות למשתמש בכבוד קליל. אל תשתמש באימוג'ים.
 
@@ -77,6 +78,17 @@ export default {
         return json(costReport(env), 200, cors);
       if (request.method === "GET" && path === "/health")
         return handleHealth(env, cors);
+      // Desktop API endpoints
+      if (request.method === "POST" && path === "/api/memory/store")
+        return handleMemoryStore(request, env, cors);
+      if (request.method === "POST" && path === "/api/memory/delete")
+        return handleMemoryDelete(request, env, cors);
+      if (request.method === "POST" && path === "/api/reminders")
+        return handleReminderCreate(request, env, cors);
+      if (request.method === "GET" && path === "/api/reminders")
+        return handleReminderList(request, env, cors);
+      if (request.method === "POST" && path.match(/^\/api\/reminders\/[^/]+\/cancel$/))
+        return handleReminderCancel(request, env, path, cors);
       if (request.method === "GET" && path === "/") return textResp(banner(), cors);
       return new Response("Not found", { status: 404, headers: cors });
     } catch (e) {
@@ -94,7 +106,7 @@ export default {
 };
 
 function banner() {
-  return "JARVIS Worker\n\nendpoints:\n  POST /            chat\n  POST /chat        chat\n  POST /memory/retrieve\n  GET  /memory\n  DELETE /memory/:id\n  GET  /reminders/poll\n  GET  /cost-report\n  GET  /health\n";
+  return "JARVIS Worker\n\nendpoints:\n  POST /            chat\n  POST /chat        chat\n  POST /memory/retrieve\n  GET  /memory\n  DELETE /memory/:id\n  GET  /reminders/poll\n  GET  /cost-report\n  GET  /health\n  POST /api/memory/store\n  POST /api/memory/delete\n  POST /api/reminders\n  GET  /api/reminders\n  POST /api/reminders/:id/cancel\n";
 }
 
 async function handleChat(request, env, ctx, cors) {
@@ -205,4 +217,50 @@ async function handleHealth(env, cors) {
   try { await env.AI.run("@cf/baai/bge-m3", { text: ["ping"] }); checks.ai = true; } catch {}
   try { await env.VECTORIZE.describe(); checks.vectorize = true; } catch { checks.vectorize = "unknown"; }
   return json({ ok: true, checks, timestamp: new Date().toISOString() }, 200, cors);
+}
+
+// --- Desktop API endpoints ---
+
+async function handleMemoryStore(request, env, cors) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad json" }, 400, cors); }
+  const userId = String(body.userId || "effi").slice(0, 64);
+  const content = body.content;
+  if (!content) return json({ error: "content required" }, 400, cors);
+  const id = await rememberExplicit(env, userId, content, { subject: body.subject, type: body.type || "semantic", salience: body.salience || 3 });
+  return json({ ok: true, id }, 200, cors);
+}
+
+async function handleMemoryDelete(request, env, cors) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad json" }, 400, cors); }
+  if (!body.id) return json({ error: "id required" }, 400, cors);
+  await env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(body.id).run();
+  try { await env.VECTORIZE.deleteByIds([body.id]); } catch {}
+  return json({ deleted: body.id }, 200, cors);
+}
+
+async function handleReminderCreate(request, env, cors) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad json" }, 400, cors); }
+  const userId = String(body.userId || "effi").slice(0, 64);
+  const result = await reminder_set(env, userId, { text: body.text, at_iso: body.at_iso, in_seconds: body.in_seconds });
+  return json(result, 200, cors);
+}
+
+async function handleReminderList(request, env, cors) {
+  const url = new URL(request.url);
+  const userId = url.searchParams.get("userId") || "effi";
+  const result = await reminder_list(env, userId);
+  return json(result, 200, cors);
+}
+
+async function handleReminderCancel(request, env, path, cors) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const parts = path.split("/");
+  const id = parts[3];
+  const userId = String(body.userId || "effi").slice(0, 64);
+  const result = await reminder_cancel(env, userId, { id });
+  return json(result, 200, cors);
 }
