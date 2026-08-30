@@ -1,11 +1,12 @@
-// memory.js
-// כל היגיון הזיכרון של Jarvis. D1 הוא מקור האמת, Vectorize הוא אינדקס שליפה.
+// src/memory.js
+// Memory logic. D1 is source of truth. Vectorize is the retrieval index.
+// Uses Cloudflare Workers AI for embeddings — FREE tier.
 
-const EMBED_MODEL = "@cf/baai/bge-m3";        // 1024 מימדים, תמיכה טובה בעברית
-const EXTRACT_MODEL = "claude-haiku-4-5-20251001"; // קריאה זולה, מחליטה מה לזכור
-const CORE_LIMIT = 20;                         // כמה זיכרונות core לטעון תמיד
-const TOPK = 6;                                // כמה זיכרונות אסוציאטיביים לשלוף
-const MIN_SCORE = 0.4;                         // סף דמיון מינימלי לשליפה סמנטית
+const EMBED_MODEL = "@cf/baai/bge-m3";
+const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
+const CORE_LIMIT = 20;
+const TOPK = 6;
+const MIN_SCORE = 0.4;
 
 const EXTRACTOR_SYSTEM = `אתה מנוע חילוץ זיכרונות עבור Jarvis. קרא את חילופי הדברים והחלט מה שווה לזכור לטווח ארוך.
 החזר JSON array בלבד, בלי טקסט נוסף ובלי code fences.
@@ -15,15 +16,12 @@ subject: מזהה קנוני קצר לזיהוי כפילויות, למשל user
 שמור רק פריטים יציבים, ספציפיים ורלוונטיים מעבר לשיחה הנוכחית.
 אל תשמור חישובים חד-פעמיים, הקשר רגעי, או מידע שכבר ברור. אם אין מה לשמור, החזר [].`;
 
-// יוצר embedding למחרוזת בודדת ומחזיר וקטור
 export async function embed(env, text) {
   const r = await env.AI.run(EMBED_MODEL, { text: [text] });
   return r.data[0];
 }
 
-// שליפה דו-שכבתית: core שתמיד נטען + associative רלוונטי להקשר
 export async function retrieveMemories(env, userId, queryText) {
-  // שכבת core: זהות והעדפות בעלי salience גבוה
   const coreRes = await env.DB.prepare(
     `SELECT id, type, content FROM memories
      WHERE user_id = ? AND status = 'active' AND type IN ('semantic','preference')
@@ -33,7 +31,6 @@ export async function retrieveMemories(env, userId, queryText) {
   const core = coreRes.results || [];
   const coreIds = new Set(core.map((m) => m.id));
 
-  // שכבת associative: top-K סמנטי מ-Vectorize
   let associative = [];
   if (queryText && queryText.trim()) {
     try {
@@ -46,7 +43,7 @@ export async function retrieveMemories(env, userId, queryText) {
       const ids = (q.matches || [])
         .filter((m) => m.score >= MIN_SCORE)
         .map((m) => m.metadata?.memory_id)
-        .filter((id) => id && !coreIds.has(id)); // בלי כפילות מול core
+        .filter((id) => id && !coreIds.has(id));
       if (ids.length) {
         const ph = ids.map(() => "?").join(",");
         const rows = await env.DB.prepare(
@@ -56,14 +53,12 @@ export async function retrieveMemories(env, userId, queryText) {
         associative = rows.results || [];
       }
     } catch (e) {
-      // שליפה סמנטית היא bonus, לא לחסום את הצ'אט אם היא נכשלת
       console.error("associative retrieval failed", e);
     }
   }
   return { core, associative };
 }
 
-// בונה בלוק <memory> להזרקה ל-system prompt
 export function buildMemoryBlock(core, associative) {
   if (!core.length && !associative.length) return "";
   const lines = [];
@@ -79,7 +74,6 @@ export function buildMemoryBlock(core, associative) {
   return `<memory>\n${lines.join("\n")}\n</memory>`;
 }
 
-// מעדכן last_accessed_at ו-access_count לזיכרונות שנשלפו (מזין את הדעיכה)
 export async function touchAccessed(env, mems) {
   const ids = mems.map((m) => m.id).filter(Boolean);
   if (!ids.length) return;
@@ -90,7 +84,6 @@ export async function touchAccessed(env, mems) {
   ).bind(Date.now(), ...ids).run();
 }
 
-// מסלול הכתיבה: Extract -> Reconcile -> Store
 export async function extractAndStore(env, userId, userMsg, assistantMsg) {
   const transcript = `משתמש: ${userMsg}\nJarvis: ${assistantMsg}`;
   let candidates;
@@ -117,22 +110,61 @@ export async function extractAndStore(env, userId, userMsg, assistantMsg) {
   }
 }
 
-// בודק כפילות/סתירה מול הקיים ואז שומר ל-D1 + Vectorize
+// Explicit "remember X" — user asked directly, save without LLM extraction.
+export async function rememberExplicit(env, userId, content, opts = {}) {
+  const mem = {
+    type: opts.type || "semantic",
+    subject: opts.subject || null,
+    content: String(content).trim(),
+    salience: opts.salience || 4,
+  };
+  if (!mem.content) return null;
+  const id = await reconcileAndStore(env, userId, mem);
+  return id;
+}
+
+export async function forgetBySubject(env, userId, subject) {
+  const rows = await env.DB.prepare(
+    `SELECT id FROM memories WHERE user_id = ? AND subject = ? AND status = 'active'`
+  ).bind(userId, subject).all();
+  const ids = (rows.results || []).map((r) => r.id);
+  for (const id of ids) {
+    await env.DB.prepare(`UPDATE memories SET status = 'archived' WHERE id = ?`).bind(id).run();
+    try { await env.VECTORIZE.deleteByIds([id]); } catch (e) {}
+  }
+  return ids.length;
+}
+
+export async function forgetById(env, id) {
+  await env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(id).run();
+  try { await env.VECTORIZE.deleteByIds([id]); } catch (e) {}
+}
+
+export async function forgetAll(env, userId) {
+  const rows = await env.DB.prepare(
+    `SELECT id FROM memories WHERE user_id = ?`
+  ).bind(userId).all();
+  const ids = (rows.results || []).map((r) => r.id);
+  await env.DB.prepare(`DELETE FROM memories WHERE user_id = ?`).bind(userId).run();
+  if (ids.length) {
+    try { await env.VECTORIZE.deleteByIds(ids); } catch (e) {}
+  }
+  return ids.length;
+}
+
 async function reconcileAndStore(env, userId, mem) {
   const now = Date.now();
   const id = crypto.randomUUID();
   const type = mem.type || "semantic";
   const salience = Number.isInteger(mem.salience) ? mem.salience : 3;
 
-  // dedup לפי subject: אותו נושא קיים -> עדכון, לא כפילות
   if (mem.subject) {
     const existing = await env.DB.prepare(
       `SELECT id, content FROM memories
        WHERE user_id = ? AND subject = ? AND status = 'active'`
     ).bind(userId, mem.subject).first();
     if (existing) {
-      if (existing.content.trim() === mem.content.trim()) return; // זהה, דלג
-      // סתירה או עדכון: מסמנים את הישן superseded ומורידים מ-Vectorize
+      if (existing.content.trim() === mem.content.trim()) return existing.id;
       await env.DB.prepare(
         `UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?`
       ).bind(id, existing.id).run();
@@ -146,13 +178,17 @@ async function reconcileAndStore(env, userId, mem) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
   ).bind(id, userId, type, mem.subject || null, mem.content, salience, now, now).run();
 
-  const vec = await embed(env, mem.content);
-  await env.VECTORIZE.upsert([
-    { id, values: vec, metadata: { memory_id: id, user_id: userId, type } },
-  ]);
+  try {
+    const vec = await embed(env, mem.content);
+    await env.VECTORIZE.upsert([
+      { id, values: vec, metadata: { memory_id: id, user_id: userId, type } },
+    ]);
+  } catch (e) {
+    console.error("vectorize upsert failed", e);
+  }
+  return id;
 }
 
-// לולאת תחזוקה: מדעיך זיכרונות אפיזודיים ישנים עם salience נמוך
 export async function consolidate(env) {
   const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - THIRTY_DAYS;
@@ -167,10 +203,8 @@ export async function consolidate(env) {
     ).bind(row.id).run();
     try { await env.VECTORIZE.deleteByIds([row.id]); } catch (e) {}
   }
-  // הרחבה עתידית: מיזוג אשכולות אפיזודיים לעובדה סמנטית אחת דרך קריאת LLM
 }
 
-// קריאה ל-Anthropic דרך המפתח שמאוחסן כ-secret ב-Worker
 export async function callAnthropic(env, body) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",

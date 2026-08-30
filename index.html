@@ -1152,6 +1152,80 @@
 
   // warm up voices list (Chrome loads async)
   if(ttsSupported){ speechSynthesis.getVoices(); }
+
+  // ---------- backend reminder polling (persistent reminders set via Claude tool) ----------
+  // Every 45s, ask the Worker if any of THIS user's reminders have fired. Speak + log them.
+  const JARVIS_USER_ID = 'effi';
+  async function pollBackendReminders(){
+    try{
+      const r = await fetch(PROXY_URL + '/reminders/poll?userId=' + encodeURIComponent(JARVIS_USER_ID));
+      if(!r.ok) return;
+      const data = await r.json();
+      if(data && Array.isArray(data.fired)){
+        for(const rem of data.fired){
+          const msg = 'תזכורת: ' + rem.text;
+          addLog('assistant', msg);
+          beep();
+          document.documentElement.style.setProperty('--ring-color','#ff8a4c');
+          speak('אדוני, ' + msg);
+          setTimeout(()=>document.documentElement.style.removeProperty('--ring-color'), 6000);
+        }
+      }
+    }catch(e){/* silent — backend may be down */}
+  }
+  // First poll after 8s, then every 45s
+  setTimeout(pollBackendReminders, 8000);
+  setInterval(pollBackendReminders, 45000);
+
+  // ---------- explicit memory commands ----------
+  // "תזכור ש..." → send to backend as a memory_write. The Claude tool loop
+  // does the actual write server-side, but we also intercept locally so it
+  // works as one-shot without opening a long chat.
+  const REMEMBER_RE = /^(?:ג'רביס\s+)?תזכור\s+(?:ש|לי\s+ש|לי\s+)?(.+)$/i;
+  const RECALL_RE = /^(?:ג'רביס\s+)?(?:מה\s+אתה\s+זוכר|מה\s+יש\s+לך\s+בזיכרון)(?:\s+(?:עלי|עליי|על\s+.+))?\??$/i;
+  const FORGET_ALL_RE = /^(?:ג'רביס\s+)?(?:תשכח\s+הכל|תמחק\s+את\s+כל\s+הזיכרון(?:ות)?)\.?$/i;
+  const FORGET_RE = /^(?:ג'רביס\s+)?תשכח\s+(.+)$/i;
+
+  async function jarvisChat(text){
+    addLog('user', text);
+    history.push({role:'user', content:text});
+    setState('thinking');
+    try{
+      const response = await fetch(PROXY_URL, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ messages: history, userId: JARVIS_USER_ID, memory_command: text })
+      });
+      const data = await response.json();
+      const reply = (data.reply||'').trim() || 'לא הצלחתי לנסח תשובה כרגע.';
+      history.push({role:'assistant', content:reply});
+      addLog('assistant', reply);
+      speak(reply);
+    }catch(e){
+      const explain = 'הבקאנד לא זמין רגע.';
+      addLog('assistant', explain);
+      speak(explain);
+    }
+  }
+
+  // Wrap handleUserMessage so memory commands hit backend directly
+  const _origHandle = handleUserMessage;
+  handleUserMessage = async function(text){
+    const t = String(text||'').trim();
+    if(FORGET_ALL_RE.test(t)){
+      return jarvisChat('שכח הכל מהזיכרון שלי, אבל בקש אישור אם צריך.');
+    }
+    if(FORGET_RE.test(t)){
+      return jarvisChat('תשכח: ' + t.match(FORGET_RE)[1]);
+    }
+    if(RECALL_RE.test(t)){
+      return jarvisChat(t);
+    }
+    if(REMEMBER_RE.test(t)){
+      return jarvisChat(t);
+    }
+    return _origHandle(text);
+  };
 })();
 </script>
 </body>
