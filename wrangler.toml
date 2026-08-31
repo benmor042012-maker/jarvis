@@ -2,21 +2,30 @@ name = "jarvis-proxi"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# מסד האמת של הזיכרון (SQLite ב-edge)
+# Optional runtime vars (secrets like ANTHROPIC_API_KEY go via `wrangler secret put`)
+[vars]
+# Comma-separated list of origins allowed by CORS. Include your GH Pages URL
+# and any localhost you develop against.
+ALLOWED_ORIGINS = "https://benmor042012-maker.github.io,http://localhost:8787,http://127.0.0.1:8787"
+# Explicit off-switch for paid tools. Set to "true" only if you intentionally
+# wire a paid tool and want it to run. Free tools ignore this.
+PAID_TOOLS_ENABLED = "false"
+
+# D1: SQLite at the edge — stores memories + reminders.
 [[d1_databases]]
 binding = "DB"
 database_name = "jarvis-memory"
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 
-# אינדקס וקטורי לשליפה סמנטית
+# Vectorize: semantic retrieval index.
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "jarvis-memories"
 
-# Workers AI, ל-embeddings בעברית (bge-m3, 1024 מימדים)
+# Workers AI: free tier for bge-m3 embeddings (1024 dims, Hebrew-friendly).
 [ai]
 binding = "AI"
 
-# לולאת תחזוקה לילית (03:00 UTC)
+# Cron: every minute, fire due reminders. Nightly at 03:00 UTC, consolidate memory.
 [triggers]
-crons = ["0 3 * * *"]
+crons = ["* * * * *", "0 3 * * *"]

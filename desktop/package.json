@@ -1,0 +1,37 @@
+{
+  "name": "jarvis-desktop",
+  "version": "1.0.0",
+  "description": "JARVIS Desktop Agent — background service with voice wake word and computer control",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.jarvis.desktop",
+    "productName": "JARVIS",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": "nsis",
+      "icon": "ui/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "ui/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "ui/icon.png"
+    }
+  },
+  "dependencies": {
+    "screenshot-desktop": "^1.15.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
