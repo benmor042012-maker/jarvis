@@ -4,6 +4,7 @@ const config = require("./src/config");
 const { VoiceService } = require("./src/voice");
 const { runAgent, abort, resetAbort, DESKTOP_PERSONA } = require("./src/agent");
 const toolRegistry = require("./src/tools/index");
+const powershell = require("./src/tools/powershell");
 const { log, readToday } = require("./src/audit");
 
 let mainWindow = null;
@@ -83,7 +84,7 @@ function updateTrayMenu(state) {
     { type: "separator" },
     { label: "Pause Listening", click: () => voice?.pause(), visible: state === "listening" || state === "active" },
     { label: "Resume Listening", click: () => voice?.resume(), visible: state === "paused" },
-    { label: "Stop JARVIS", click: () => { abort(); voice?.stop(); updateTrayMenu("stopped"); } },
+    { label: "Stop JARVIS", click: () => emergencyStop("tray") },
     { type: "separator" },
     { label: `Mode: ${cfg.mode.toUpperCase()}`, enabled: false },
     { label: "Switch to Safe Mode", click: () => { cfg = config.update({ mode: "safe" }); updateTrayMenu(voice?.getState() || "stopped"); }, visible: cfg.mode !== "safe" },
@@ -97,15 +98,18 @@ function updateTrayMenu(state) {
   tray.setContextMenu(menu);
 }
 
+function emergencyStop(source) {
+  abort();
+  powershell.killAll();
+  voice?.stop();
+  updateTrayMenu("stopped");
+  log({ action: "emergency_stop", tool: source, result: "SUCCESS" });
+  mainWindow?.webContents.send("emergency-stop");
+}
+
 function registerHotkeys() {
   const key = cfg.hotkeys?.emergencyStop || "CommandOrControl+Shift+Escape";
-  globalShortcut.register(key, () => {
-    abort();
-    voice?.stop();
-    updateTrayMenu("stopped");
-    log({ action: "emergency_stop", tool: "hotkey", result: "SUCCESS" });
-    if (mainWindow?.isVisible()) mainWindow.webContents.send("emergency-stop");
-  });
+  globalShortcut.register(key, () => emergencyStop("hotkey"));
 }
 
 function startVoice() {
@@ -141,6 +145,7 @@ async function handleAgentMessage(text, history = []) {
     messages,
     mode: cfg.mode,
     requestApproval: (info) => requestUserApproval(info),
+    onProgress: (p) => mainWindow?.webContents.send("agent-progress", p),
   });
   mainWindow?.webContents.send("agent-reply", { reply, toolTrace, aborted });
   if (reply && cfg.ttsEnabled && voice) {
@@ -150,18 +155,24 @@ async function handleAgentMessage(text, history = []) {
 }
 
 async function requestUserApproval(info) {
-  if (!mainWindow) return false;
+  if (!mainWindow) return { approved: false, scope: "once" };
+  showWindow();
   return new Promise((resolve) => {
-    mainWindow.webContents.send("request-approval", info);
-    const handler = (_event, approved) => {
+    let settled = false;
+    const finish = (answer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       ipcMain.removeListener("approval-response", handler);
-      resolve(approved);
+      resolve(answer);
+    };
+    const handler = (_event, answer) => {
+      const norm = typeof answer === "boolean" ? { approved: answer, scope: "once" } : (answer || { approved: false, scope: "once" });
+      finish(norm);
     };
     ipcMain.on("approval-response", handler);
-    setTimeout(() => {
-      ipcMain.removeListener("approval-response", handler);
-      resolve(false);
-    }, 60000);
+    const timer = setTimeout(() => finish({ approved: false, scope: "once", reason: "timeout" }), 120000);
+    mainWindow.webContents.send("request-approval", info);
   });
 }
 
@@ -182,12 +193,7 @@ ipcMain.handle("voice-stop", () => voice?.stop());
 ipcMain.handle("voice-pause", () => voice?.pause());
 ipcMain.handle("voice-resume", () => voice?.resume());
 
-ipcMain.handle("emergency-stop", () => {
-  abort();
-  voice?.stop();
-  updateTrayMenu("stopped");
-  log({ action: "emergency_stop", tool: "button", result: "SUCCESS" });
-});
+ipcMain.handle("emergency-stop", () => emergencyStop("button"));
 
 ipcMain.handle("set-mode", (_e, mode) => {
   cfg = config.update({ mode });
