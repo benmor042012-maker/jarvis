@@ -26,9 +26,6 @@ contextBridge.exposeInMainWorld("jarvis", {
   onRequestApproval: (cb) => ipcRenderer.on("request-approval", (_e, info) => cb(info)),
   onEmergencyStop: (cb) => ipcRenderer.on("emergency-stop", () => cb()),
   onShowAudit: (cb) => ipcRenderer.on("show-audit", () => cb()),
-});
 
-contextBridge.exposeInMainWorld("_jarvisVoiceApi", {
-  onTranscript: (text, isFinal) => ipcRenderer.send("voice-transcript", text, isFinal),
-  onError: (err) => ipcRenderer.send("voice-error", err),
+  getBridgeInfo: () => ipcRenderer.invoke("get-bridge-info"),
 });

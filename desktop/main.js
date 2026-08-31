@@ -5,6 +5,7 @@ const { VoiceService } = require("./src/voice");
 const { runAgent, abort, resetAbort, DESKTOP_PERSONA } = require("./src/agent");
 const toolRegistry = require("./src/tools/index");
 const powershell = require("./src/tools/powershell");
+const bridge = require("./src/bridge");
 const { log, readToday } = require("./src/audit");
 
 let mainWindow = null;
@@ -23,7 +24,31 @@ app.whenReady().then(() => {
   createWindow();
   registerHotkeys();
   startVoice();
+  startBridge();
+  applyAutoStart();
 });
+
+function startBridge() {
+  bridge.start(
+    () => cfg,
+    async (text, history) => {
+      showWindow();
+      mainWindow?.webContents.send("voice-command", text);
+      voice?.commandReceived(text);
+      try {
+        return await handleAgentMessage(text, history);
+      } finally {
+        voice?.doneProcessing();
+      }
+    }
+  );
+}
+
+function applyAutoStart() {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart, args: [] });
+  } catch {}
+}
 
 app.on("window-all-closed", (e) => {
   // Don't quit — keep running in tray
@@ -31,6 +56,7 @@ app.on("window-all-closed", (e) => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  bridge.stop();
 });
 
 function createWindow() {
@@ -126,16 +152,7 @@ function startVoice() {
     if (!mainWindow?.isVisible()) showWindow();
   });
 
-  voice.on("command", async (text) => {
-    log({ action: "voice_command", tool: "voice", target: text.slice(0, 200), result: "RECEIVED" });
-    mainWindow?.webContents.send("voice-command", text);
-    await handleAgentMessage(text);
-    voice.doneProcessing();
-  });
-
-  if (cfg.wakeWordEnabled && mainWindow) {
-    voice.start(mainWindow);
-  }
+  if (mainWindow) voice.start(mainWindow);
 }
 
 async function handleAgentMessage(text, history = []) {
@@ -178,7 +195,13 @@ async function requestUserApproval(info) {
 
 // --- IPC Handlers ---
 ipcMain.handle("get-config", () => config.load());
-ipcMain.handle("update-config", (_e, partial) => { cfg = config.update(partial); return cfg; });
+ipcMain.handle("update-config", (_e, partial) => {
+  const portChanged = partial.bridgePort !== undefined && partial.bridgePort !== cfg.bridgePort;
+  cfg = config.update(partial);
+  if (partial.autoStart !== undefined) applyAutoStart();
+  if (portChanged) startBridge();
+  return cfg;
+});
 ipcMain.handle("get-voice-state", () => voice?.getState() || "stopped");
 ipcMain.handle("get-audit", (_e, limit) => readToday(limit));
 
@@ -201,13 +224,7 @@ ipcMain.handle("set-mode", (_e, mode) => {
   return cfg;
 });
 
-ipcMain.on("voice-transcript", (_e, text, isFinal) => {
-  voice?.handleTranscript(text, isFinal);
-});
-
-ipcMain.on("voice-error", (_e, err) => {
-  console.error("Voice error:", err);
-  if (err === "not-allowed" || err === "service-not-allowed") {
-    voice?.stop();
-  }
-});
+ipcMain.handle("get-bridge-info", () => ({
+  port: cfg.bridgePort,
+  token: cfg.bridgeToken,
+}));
