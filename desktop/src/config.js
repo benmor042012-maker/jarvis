@@ -14,7 +14,7 @@ const DEFAULTS = {
   backendUrl: "https://jarvis-proxi.ben-mor-04-2012.workers.dev",
   userId: "effi",
   anthropicApiKey: "",
-  model: "claude-sonnet-4-20250514",
+  model: "claude-opus-5",
   // Assistant, not safe: safe mode refuses every click and keystroke, so a
   // fresh install would look broken. The ASK/CONFIRM/HIGH_RISK/BLOCKED gates
   // are what keep this safe, not the mode.
@@ -50,6 +50,17 @@ function ensureDirs() {
   }
 }
 
+// Model IDs that the API no longer serves. A saved config overrides DEFAULTS,
+// so without this a config written by an older build keeps sending a dead model
+// and every request comes back "Error: model: <id>".
+const RETIRED_MODELS = new Set([
+  "claude-sonnet-4-20250514",
+  "claude-3-5-sonnet-20241022",
+  "claude-3-5-haiku-20241022",
+  "claude-3-opus-20240229",
+  "claude-haiku-4-5-20251001",
+]);
+
 function load() {
   ensureDirs();
   let cfg;
@@ -58,8 +69,17 @@ function load() {
   } catch {
     cfg = { ...DEFAULTS };
   }
+
+  let dirty = false;
   if (!cfg.bridgeToken) {
     cfg.bridgeToken = crypto.randomBytes(24).toString("hex");
+    dirty = true;
+  }
+  if (!cfg.model || RETIRED_MODELS.has(cfg.model)) {
+    cfg.model = DEFAULTS.model;
+    dirty = true;
+  }
+  if (dirty) {
     try { save(cfg); } catch {}
   }
   return cfg;

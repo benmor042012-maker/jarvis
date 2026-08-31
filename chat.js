@@ -6,7 +6,7 @@
 // ============================================================
 
 const ALLOWED_ORIGIN = "https://benmor042012-maker.github.io";
-const MODEL          = "claude-sonnet-5";        // or "claude-haiku-4-5-20251001"
+const MODEL          = "claude-sonnet-5";        // or "claude-haiku-4-5"
 const MAX_TOKENS     = 1000;
 const SYSTEM_PROMPT  = "אתה JARVIS, עוזר AI חכם, שנון ורגוע בסגנון הסרטים של איירון מן. אתה עונה תמיד בעברית, בקצרה ולעניין (1-3 משפטים בדרך כלל, אלא אם התבקש הסבר ארוך), בביטחון עצמי מסוים ומעט הומור יבש, בלי להיות מוגזם. אתה יכול לפנות למשתמש בכבוד קליל. אל תשתמש באימוג'ים.";
 

@@ -3,7 +3,7 @@
 // Uses Cloudflare Workers AI for embeddings — FREE tier.
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
-const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
+const EXTRACT_MODEL = "claude-haiku-4-5";
 const CORE_LIMIT = 20;
 const TOPK = 6;
 const MIN_SCORE = 0.4;
