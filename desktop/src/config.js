@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 
 const JARVIS_HOME = path.join(os.homedir(), ".jarvis");
 const CONFIG_PATH = path.join(JARVIS_HOME, "config.json");
@@ -14,7 +15,10 @@ const DEFAULTS = {
   userId: "effi",
   anthropicApiKey: "",
   model: "claude-sonnet-4-20250514",
-  mode: "safe",
+  // Assistant, not safe: safe mode refuses every click and keystroke, so a
+  // fresh install would look broken. The ASK/CONFIRM/HIGH_RISK/BLOCKED gates
+  // are what keep this safe, not the mode.
+  mode: "assistant",
   wakeWordEnabled: true,
   wakeWords: ["jarvis", "ג'רביס", "גרביס"],
   autoStart: false,
@@ -22,6 +26,22 @@ const DEFAULTS = {
   ttsEnabled: true,
   ttsLang: "he-IL",
   sttLang: "he-IL",
+
+  // Local bridge: the Chrome tab does Hebrew speech recognition and posts
+  // commands here. Token-gated — see bridge.js.
+  bridgePort: 8765,
+  bridgeToken: "",
+  bridgeOrigins: [
+    "https://benmor042012-maker.github.io",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+  ],
+
+  // Messaging credentials. Local only — never sent anywhere but the provider.
+  telegramBotToken: "",
+  telegramDefaultChatId: "",
+  gmailAddress: "",
+  gmailAppPassword: "",
 };
 
 function ensureDirs() {
@@ -32,12 +52,17 @@ function ensureDirs() {
 
 function load() {
   ensureDirs();
+  let cfg;
   try {
-    const raw = fs.readFileSync(CONFIG_PATH, "utf8");
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) };
   } catch {
-    return { ...DEFAULTS };
+    cfg = { ...DEFAULTS };
   }
+  if (!cfg.bridgeToken) {
+    cfg.bridgeToken = crypto.randomBytes(24).toString("hex");
+    try { save(cfg); } catch {}
+  }
+  return cfg;
 }
 
 function save(cfg) {

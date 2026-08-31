@@ -255,6 +255,16 @@
     <span id="wakeToggleLabel">הפעל האזנה תמידית (מילת עוררות)</span>
   </div>
 
+  <div class="wake-toggle" id="desktopToggle" title="חיבור לאפליקציית JARVIS במחשב — רק היא יכולה לשלוט במחשב">
+    <span class="dot" id="desktopDot" style="background:#64748b"></span>
+    <span id="desktopLabel">לא מחובר למחשב</span>
+  </div>
+
+  <div class="fallback" id="desktopSetup" style="display:none">
+    <input type="text" id="desktopTokenInput" placeholder="הדבק כאן את ה-Connection Token מהגדרות אפליקציית ג'רביס">
+    <button id="desktopConnectBtn">חבר</button>
+  </div>
+
   <div class="fallback" id="fallback">
     <input type="text" id="textInput" placeholder="כתוב הודעה ל-JARVIS...">
     <button id="sendBtn">שלח</button>
@@ -583,35 +593,10 @@
       run:(t,m)=>openUrl(t, "https://www.google.com/search?q="+encodeURIComponent(m.q), "חיפוש: "+m.q) },
 
     // open a known site
-    // send a WhatsApp message on your behalf (opens WhatsApp with the text ready; you tap send)
-    { name:'send_whatsapp',
-      test:t=>{
-        // NOTE: JS \b does not work next to Hebrew letters, so we avoid it here.
-        if(!/^\s*(?:תשלח|שלח|שלחי)\s/.test(t)) return false;
-        let s = t.replace(/^\s*(?:תשלח|שלח|שלחי)\s+/, '')
-                 .replace(/הודעה/g, ' ')
-                 .replace(/בוואטסאפ|בווצאפ|בוואצאפ|וואטסאפ|ווצאפ|וואצאפ/g, ' ')
-                 .replace(/\s+/g,' ').trim();
-        // s looks like: "לאבא אני אוהב אותך" | "לאבא שאני אוהב אותו" | "אבא ..."
-        let m = s.match(/^(?:ל|אל)?\s*(\S+)\s+(.+)$/);
-        if(!m) return false;
-        let name = m[1].replace(/^ל/,'').replace(/^ה/,'');
-        let msg = m[2].trim()
-                   .replace(/^של[יךוהםן]?\s+/, '')     // possessive "שלי/שלך..."
-                   .replace(/^[:,]\s*/, '')
-                   .replace(/^ש(?=\S)/, '')             // connector "ש" glued to next word
-                   .trim();
-        if(!name || !msg) return false;
-        return { name, msg };
-      },
-      run:(t,m)=>{
-        const num = loadContacts()[m.name];
-        if(!num){
-          respond(t, "אין לי מספר של "+m.name+". אפשר להוסיף בקובץ, או להגיד: תזכור שהמספר של "+m.name+" הוא, ואז המספר.");
-          return;
-        }
-        openUrl(t, "https://wa.me/"+waNumber(num)+"?text="+encodeURIComponent(m.msg), "וואטסאפ ל"+m.name);
-      } },
+    // NOTE: sending WhatsApp used to be a brittle Hebrew regex here that only
+    // pre-filled the chat and left you to press send. The desktop app does it
+    // properly now (resolves the contact, shows you recipient + text, sends on
+    // your approval), so this page hands "send a message" to the agent.
 
     // schedule a real calendar event (opens Google Calendar pre-filled; you press Save)
     { name:'calendar_event',
@@ -1098,6 +1083,77 @@
     handleUserMessage(val);
   }
 
+  // ---------- JARVIS Desktop bridge ----------
+  // A browser page cannot touch the operating system. The desktop app can.
+  // So when the desktop app is running, this page acts as its ears: Chrome
+  // does the Hebrew speech recognition (which does not work inside Electron)
+  // and hands the command over localhost to the app, which does the work.
+  const DESKTOP_TOKEN_KEY = 'jarvis_desktop_token';
+  const DESKTOP_PORT_KEY = 'jarvis_desktop_port';
+  let desktopOnline = false;
+
+  function desktopToken(){ try{ return localStorage.getItem(DESKTOP_TOKEN_KEY) || ''; }catch(e){ return ''; } }
+  function desktopPort(){ try{ return localStorage.getItem(DESKTOP_PORT_KEY) || '8765'; }catch(e){ return '8765'; } }
+  function desktopUrl(path){ return 'http://127.0.0.1:' + desktopPort() + path; }
+
+  function initDesktopUi(){
+    const toggle = document.getElementById('desktopToggle');
+    const setup = document.getElementById('desktopSetup');
+    const input = document.getElementById('desktopTokenInput');
+    const btn = document.getElementById('desktopConnectBtn');
+    if(!toggle) return;
+
+    toggle.addEventListener('click', ()=>{
+      setup.style.display = setup.style.display === 'none' ? '' : 'none';
+      if(setup.style.display !== 'none'){ input.value = desktopToken(); input.focus(); }
+    });
+
+    async function connect(){
+      const t = input.value.trim();
+      try{ localStorage.setItem(DESKTOP_TOKEN_KEY, t); }catch(e){}
+      const online = await checkDesktop();
+      if(online){
+        setup.style.display = 'none';
+        addLog('assistant', 'מחובר לאפליקציה במחשב. עכשיו אני יכול לשלוט במחשב.');
+      }else{
+        addLog('assistant', 'לא מצאתי את האפליקציה. ודא שהיא רצה (START-JARVIS.bat) ושהקוד נכון.');
+      }
+    }
+    btn.addEventListener('click', connect);
+    input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') connect(); });
+
+    checkDesktop();
+    setInterval(checkDesktop, 15000);
+  }
+
+  async function checkDesktop(){
+    if(!desktopToken()){ setDesktopStatus(false); return false; }
+    try{
+      const r = await fetch(desktopUrl('/health'), { method:'GET' });
+      setDesktopStatus(r.ok);
+      return r.ok;
+    }catch(e){ setDesktopStatus(false); return false; }
+  }
+
+  function setDesktopStatus(online){
+    desktopOnline = online;
+    const dot = document.getElementById('desktopDot');
+    const label = document.getElementById('desktopLabel');
+    if(dot) dot.style.background = online ? '#22c55e' : '#64748b';
+    if(label) label.textContent = online ? 'שולט במחשב' : 'לא מחובר למחשב';
+  }
+
+  async function sendToDesktop(text){
+    const r = await fetch(desktopUrl('/command'), {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'X-Jarvis-Token': desktopToken() },
+      body: JSON.stringify({ text, history: history.slice(-20) })
+    });
+    if(r.status === 401) throw new Error('הקוד לא נכון. העתק אותו מההגדרות של אפליקציית ג\'רביס.');
+    if(!r.ok) throw new Error('desktop ' + r.status);
+    return r.json();
+  }
+
   // ---------- Claude brain ----------
   async function handleUserMessage(text){
     if(tryHandleCommand(text)){
@@ -1106,6 +1162,24 @@
     addLog('user', text);
     history.push({role:'user', content:text});
     setState('thinking');
+
+    // Prefer the desktop app — it is the only path that can act on the machine.
+    if(desktopOnline || await checkDesktop()){
+      try{
+        const data = await sendToDesktop(text);
+        const reply = (data.reply||'').trim() || 'ביצעתי.';
+        history.push({role:'assistant', content:reply});
+        addLog('assistant', reply);
+        speak(reply);
+        return;
+      }catch(e){
+        setDesktopStatus(false);
+        addLog('assistant', 'איבדתי את החיבור לאפליקציה במחשב. ' + (e.message||''));
+        speak('איבדתי את החיבור לאפליקציה במחשב.');
+        return;
+      }
+    }
+
     try{
       const response = await fetch(PROXY_URL, {
         method:"POST",
@@ -1226,6 +1300,8 @@
     }
     return _origHandle(text);
   };
+
+  initDesktopUi();
 })();
 </script>
 </body>

@@ -1,8 +1,13 @@
+// CONFIRM sits between ASK and HIGH_RISK: outward-facing, irreversible actions
+// (sending a message or an email). Only ASK is task-approvable, so a blanket
+// "approve all for this task" can never authorize a send — every message is
+// confirmed individually, with its recipient and full text on screen.
 const LEVELS = {
   SAFE: 1,
   ASK: 2,
-  HIGH_RISK: 3,
-  BLOCKED: 4,
+  CONFIRM: 3,
+  HIGH_RISK: 4,
+  BLOCKED: 5,
 };
 
 const ACTION_LEVELS = {
@@ -26,9 +31,13 @@ const ACTION_LEVELS = {
   window_focus: LEVELS.SAFE,
   window_minimize: LEVELS.SAFE,
   window_maximize: LEVELS.SAFE,
+  contact_list: LEVELS.SAFE,
+  contact_save: LEVELS.SAFE,
 
-  send_email: LEVELS.ASK,
-  send_message: LEVELS.ASK,
+  send_email: LEVELS.CONFIRM,
+  send_message: LEVELS.CONFIRM,
+
+  read_messages: LEVELS.ASK,
   create_event: LEVELS.ASK,
   file_write_outside: LEVELS.ASK,
   file_read_outside: LEVELS.ASK,
@@ -76,7 +85,7 @@ function isAllowed(action, mode) {
 }
 
 function levelLabel(level) {
-  return { 1: "SAFE", 2: "ASK", 3: "HIGH_RISK", 4: "BLOCKED" }[level] || "UNKNOWN";
+  return { 1: "SAFE", 2: "ASK", 3: "CONFIRM", 4: "HIGH_RISK", 5: "BLOCKED" }[level] || "UNKNOWN";
 }
 
 function isTaskApprovable(action) {

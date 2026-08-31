@@ -57,6 +57,11 @@
   .approval-level { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
   .approval-level.ask { background: rgba(234,179,8,0.15); color: var(--ask); }
   .approval-level.high { background: rgba(249,115,22,0.15); color: var(--risk); }
+  .approval-level.confirm { background: rgba(59,130,246,0.15); color: var(--accent); }
+  .msg-preview { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 12px 0; }
+  .msg-preview .to { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+  .msg-preview .to b { color: var(--text); font-size: 14px; }
+  .msg-preview .body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; }
   .approval-buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
   .approval-buttons button { width: 100%; padding: 10px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; }
   .btn-approve-task { background: var(--safe); color: white; font-weight: 600; }
@@ -134,9 +139,13 @@
 <!-- Approval dialog -->
 <div class="approval-overlay hidden" id="approvalOverlay">
   <div class="approval-dialog">
-    <h3>JARVIS wants to perform an action</h3>
+    <h3 id="approvalTitle">JARVIS wants to perform an action</h3>
     <span class="approval-level ask" id="approvalLevel">ASK</span>
     <div id="approvalInfo"></div>
+    <div class="msg-preview hidden" id="approvalPreview">
+      <div class="to">אל: <b id="approvalTo"></b></div>
+      <div class="body" id="approvalBody"></div>
+    </div>
     <div class="approval-detail" id="approvalDetail"></div>
     <div class="approval-buttons">
       <button class="btn-approve-task" id="btnApproveTask">אשר הכל למשימה הזו</button>
@@ -200,6 +209,47 @@
       <option value="en-US">English</option>
       <option value="ar-SA">Arabic</option>
     </select>
+  </div>
+
+  <h3 style="margin:24px 0 4px;font-size:15px">חיבור קול (טאב Chrome)</h3>
+  <div style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:8px">
+    זיהוי דיבור בעברית עובד רק ב-Chrome. העתק את הקוד הזה והדבק אותו בדף ג'רביס ב-Chrome — משם הוא ישלח לכאן פקודות קוליות.
+  </div>
+  <div class="setting-row">
+    <label>Connection Token</label>
+    <input type="text" id="cfgToken" readonly style="font-family:monospace;font-size:12px">
+  </div>
+  <div class="setting-row">
+    <label>Bridge Port</label>
+    <input type="text" id="cfgPort">
+  </div>
+  <div class="setting-row">
+    <label>הפעלה אוטומטית עם Windows</label>
+    <select id="cfgAutoStart">
+      <option value="true">Enabled</option>
+      <option value="false">Disabled</option>
+    </select>
+  </div>
+
+  <h3 style="margin:24px 0 4px;font-size:15px">הודעות</h3>
+  <div style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:8px">
+    נשמר רק במחשב שלך, ב-~/.jarvis/config.json. WhatsApp לא דורש כלום — הוא עובד דרך WhatsApp Web שכבר מחובר אצלך.
+  </div>
+  <div class="setting-row">
+    <label>Telegram Bot Token</label>
+    <input type="password" id="cfgTgToken" placeholder="123456:ABC-...">
+  </div>
+  <div class="setting-row">
+    <label>Telegram Chat ID</label>
+    <input type="text" id="cfgTgChat" placeholder="שלח /id לבוט כדי לקבל">
+  </div>
+  <div class="setting-row">
+    <label>Gmail Address</label>
+    <input type="text" id="cfgGmail" placeholder="you@gmail.com">
+  </div>
+  <div class="setting-row">
+    <label>Gmail App Password</label>
+    <input type="password" id="cfgGmailPass" placeholder="16 תווים מ-Google">
   </div>
   <div style="margin-top:16px">
     <button id="btnSaveSettings" style="padding:10px 24px;border-radius:8px;border:none;background:var(--accent);color:white;cursor:pointer">Save</button>
@@ -296,18 +346,48 @@ window.jarvis.onAgentReply(({ reply, toolTrace, aborted }) => {
 
 // Approval
 const btnApproveTask = document.getElementById("btnApproveTask");
+const MESSAGING_ACTIONS = { send_message: 1, send_email: 1 };
+
 window.jarvis.onRequestApproval((info) => {
-  const highRisk = !info.taskApprovable;
+  const isMessage = !!MESSAGING_ACTIONS[info.action];
+  const blanketAllowed = !!info.taskApprovable;
   approvalOverlay.classList.remove("hidden");
-  document.getElementById("approvalLevel").textContent = highRisk ? "HIGH RISK" : "ASK";
-  document.getElementById("approvalLevel").className = `approval-level ${highRisk ? "high" : "ask"}`;
-  document.getElementById("approvalInfo").textContent = `Tool: ${info.tool}\nAction: ${info.action}`;
-  document.getElementById("approvalDetail").textContent = JSON.stringify(info.input, null, 2);
-  // High-risk actions are never blanket-approved for a whole task.
-  btnApproveTask.classList.toggle("hidden", highRisk);
-  document.getElementById("approvalHint").textContent = highRisk
-    ? "פעולה מסוכנת — היא דורשת אישור נפרד בכל פעם."
-    : "\"אשר הכל למשימה הזו\" יאשר פעולות מאותה רמת סיכון עד סוף המשימה הנוכחית. פעולות מסוכנות ורכישות עדיין ייחסמו.";
+
+  const levelEl = document.getElementById("approvalLevel");
+  levelEl.textContent = isMessage ? "CONFIRM" : blanketAllowed ? "ASK" : "HIGH RISK";
+  levelEl.className = `approval-level ${isMessage ? "confirm" : blanketAllowed ? "ask" : "high"}`;
+
+  document.getElementById("approvalTitle").textContent = isMessage
+    ? "ג'רביס רוצה לשלוח הודעה"
+    : "JARVIS wants to perform an action";
+
+  // For a message, show recipient and body as text the user can actually read
+  // and check — raw JSON is not something anyone verifies carefully.
+  const preview = document.getElementById("approvalPreview");
+  const detail = document.getElementById("approvalDetail");
+  if (isMessage) {
+    const i = info.input || {};
+    document.getElementById("approvalTo").textContent = i.to || "(ברירת מחדל)";
+    document.getElementById("approvalBody").textContent =
+      [i.subject ? `נושא: ${i.subject}` : "", i.text || i.body || ""].filter(Boolean).join("\n\n");
+    preview.classList.remove("hidden");
+    detail.classList.add("hidden");
+    document.getElementById("approvalInfo").textContent = `דרך: ${info.tool}`;
+  } else {
+    preview.classList.add("hidden");
+    detail.classList.remove("hidden");
+    detail.textContent = JSON.stringify(info.input, null, 2);
+    document.getElementById("approvalInfo").textContent = `Tool: ${info.tool}\nAction: ${info.action}`;
+  }
+
+  // Only ASK-level actions can be blanket-approved for a task. Messages and
+  // high-risk actions are always confirmed one at a time.
+  btnApproveTask.classList.toggle("hidden", !blanketAllowed);
+  document.getElementById("approvalHint").textContent = isMessage
+    ? "כל הודעה מאושרת בנפרד. אישור למשימה שלמה לא מכסה שליחת הודעות."
+    : blanketAllowed
+      ? "\"אשר הכל למשימה הזו\" יאשר פעולות מאותה רמת סיכון עד סוף המשימה הנוכחית. הודעות, פעולות מסוכנות ורכישות עדיין יידרשו אישור נפרד."
+      : "פעולה מסוכנת — היא דורשת אישור נפרד בכל פעם.";
 });
 function respond(approved, scope) {
   approvalOverlay.classList.add("hidden");
@@ -364,8 +444,16 @@ document.getElementById("btnSettings").addEventListener("click", async () => {
   document.getElementById("cfgWakeWord").value = String(cfg.wakeWordEnabled);
   document.getElementById("cfgTts").value = String(cfg.ttsEnabled);
   document.getElementById("cfgLang").value = cfg.sttLang || "he-IL";
+  document.getElementById("cfgToken").value = cfg.bridgeToken || "";
+  document.getElementById("cfgPort").value = cfg.bridgePort || 8765;
+  document.getElementById("cfgAutoStart").value = String(!!cfg.autoStart);
+  document.getElementById("cfgTgToken").value = cfg.telegramBotToken || "";
+  document.getElementById("cfgTgChat").value = cfg.telegramDefaultChatId || "";
+  document.getElementById("cfgGmail").value = cfg.gmailAddress || "";
+  document.getElementById("cfgGmailPass").value = cfg.gmailAppPassword || "";
   document.getElementById("settingsPanel").classList.add("visible");
 });
+document.getElementById("cfgToken").addEventListener("click", (e) => e.target.select());
 document.getElementById("btnCloseSettings").addEventListener("click", () => { document.getElementById("settingsPanel").classList.remove("visible"); });
 document.getElementById("btnSaveSettings").addEventListener("click", async () => {
   await window.jarvis.updateConfig({
@@ -377,6 +465,12 @@ document.getElementById("btnSaveSettings").addEventListener("click", async () =>
     wakeWordEnabled: document.getElementById("cfgWakeWord").value === "true",
     ttsEnabled: document.getElementById("cfgTts").value === "true",
     sttLang: document.getElementById("cfgLang").value,
+    bridgePort: Number(document.getElementById("cfgPort").value) || 8765,
+    autoStart: document.getElementById("cfgAutoStart").value === "true",
+    telegramBotToken: document.getElementById("cfgTgToken").value.trim(),
+    telegramDefaultChatId: document.getElementById("cfgTgChat").value.trim(),
+    gmailAddress: document.getElementById("cfgGmail").value.trim(),
+    gmailAppPassword: document.getElementById("cfgGmailPass").value.trim(),
   });
   modeBadge.textContent = document.getElementById("cfgMode").value.toUpperCase();
   document.getElementById("settingsPanel").classList.remove("visible");

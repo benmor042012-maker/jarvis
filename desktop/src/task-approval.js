@@ -18,8 +18,10 @@ function approveAction(actionType) {
 
 function isPreApproved(actionType) {
   const level = ACTION_LEVELS[actionType] || LEVELS.ASK;
-  if (level === LEVELS.BLOCKED) return false;
-  if (level === LEVELS.HIGH_RISK) return false;
+  // CONFIRM and above are never carried over from an earlier approval — not by
+  // a task-wide approval, and not by an earlier approval of the same action.
+  // Every message, every deletion, every shell command is confirmed on its own.
+  if (level >= LEVELS.CONFIRM) return false;
   if (taskApproved && level === LEVELS.ASK) return true;
   if (approvedActions.has(actionType)) return true;
   return false;
