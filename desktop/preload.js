@@ -16,12 +16,13 @@ contextBridge.exposeInMainWorld("jarvis", {
   emergencyStop: () => ipcRenderer.invoke("emergency-stop"),
   setMode: (mode) => ipcRenderer.invoke("set-mode", mode),
 
-  approvalResponse: (approved) => ipcRenderer.send("approval-response", approved),
+  approvalResponse: (answer) => ipcRenderer.send("approval-response", answer),
 
   onVoiceState: (cb) => ipcRenderer.on("voice-state", (_e, s) => cb(s)),
   onWakeword: (cb) => ipcRenderer.on("wakeword", () => cb()),
   onVoiceCommand: (cb) => ipcRenderer.on("voice-command", (_e, t) => cb(t)),
   onAgentReply: (cb) => ipcRenderer.on("agent-reply", (_e, d) => cb(d)),
+  onAgentProgress: (cb) => ipcRenderer.on("agent-progress", (_e, p) => cb(p)),
   onRequestApproval: (cb) => ipcRenderer.on("request-approval", (_e, info) => cb(info)),
   onEmergencyStop: (cb) => ipcRenderer.on("emergency-stop", () => cb()),
   onShowAudit: (cb) => ipcRenderer.on("show-audit", () => cb()),
