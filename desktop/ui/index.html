@@ -95,6 +95,26 @@
   .audit-entry .result.BLOCKED { color: var(--blocked); }
   .audit-entry .result.ERROR { color: var(--risk); }
 
+  /* First-run setup */
+  .setup-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 200; overflow-y: auto; padding: 32px 24px; }
+  .setup-card { max-width: 560px; margin: 0 auto; }
+  .setup-card h1 { font-size: 26px; margin-bottom: 6px; }
+  .setup-card .sub { color: var(--text-dim); font-size: 14px; margin-bottom: 28px; line-height: 1.6; }
+  .setup-step { margin-bottom: 26px; }
+  .setup-step h2 { font-size: 15px; margin-bottom: 6px; }
+  .setup-step p { font-size: 13px; color: var(--text-dim); line-height: 1.6; margin-bottom: 10px; }
+  .setup-step input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px; outline: none; font-family: monospace; }
+  .setup-step input:focus { border-color: var(--accent); }
+  .setup-step a { color: var(--accent); }
+  .choice { display: flex; gap: 10px; }
+  .choice button { flex: 1; text-align: right; padding: 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 14px; font-family: inherit; }
+  .choice button .t { display: block; font-weight: 600; margin-bottom: 4px; }
+  .choice button .d { display: block; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .choice button.sel { border-color: var(--accent); background: rgba(59,130,246,0.1); }
+  .setup-go { width: 100%; padding: 14px; border-radius: 10px; border: none; background: var(--accent); color: white; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .setup-go:disabled { opacity: 0.4; cursor: default; }
+  .setup-err { color: var(--blocked); font-size: 13px; margin-top: 10px; min-height: 18px; }
+
   .hidden { display: none !important; }
   .orb-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-left: 8px; }
   .orb-indicator.listening { background: var(--safe); box-shadow: 0 0 8px var(--safe); animation: pulse 2s infinite; }
@@ -153,6 +173,41 @@
       <button class="btn-deny" id="btnDeny">דחה</button>
     </div>
     <div class="approval-hint" id="approvalHint"></div>
+  </div>
+</div>
+
+<!-- First-run setup -->
+<div class="setup-overlay hidden" id="setupOverlay">
+  <div class="setup-card">
+    <h1>ברוך הבא ל-JARVIS</h1>
+    <div class="sub">שני דברים ואנחנו מוכנים. זה לוקח פחות מדקה.</div>
+
+    <div class="setup-step">
+      <h2>1. מפתח API</h2>
+      <p>
+        זה מה שנותן לג'רביס את היכולת לחשוב. היכנס ל-<a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>,
+        צור מפתח, והדבק אותו כאן. הוא נשמר רק במחשב שלך.
+      </p>
+      <input type="password" id="setupKey" placeholder="sk-ant-..." autocomplete="off" dir="ltr">
+    </div>
+
+    <div class="setup-step">
+      <h2>2. מה מותר לג'רביס</h2>
+      <p>אפשר לשנות את זה בכל רגע בלחיצה על התג למעלה.</p>
+      <div class="choice">
+        <button id="setupAssistant" class="sel">
+          <span class="t">שליטה מלאה</span>
+          <span class="d">פותח תוכנות, לוחץ, מקליד, שולח הודעות. פעולות מסוכנות ושליחת הודעות שואלות אותך קודם. רכישות חסומות תמיד.</span>
+        </button>
+        <button id="setupSafe">
+          <span class="t">צפייה בלבד</span>
+          <span class="d">רואה את המסך וקורא, אבל לא נוגע בכלום.</span>
+        </button>
+      </div>
+    </div>
+
+    <button class="setup-go" id="setupGo" disabled>בוא נתחיל</button>
+    <div class="setup-err" id="setupErr"></div>
   </div>
 </div>
 
@@ -493,17 +548,55 @@ document.getElementById("btnAudit").addEventListener("click", async () => {
 document.getElementById("btnCloseAudit").addEventListener("click", () => { document.getElementById("auditPanel").classList.remove("visible"); });
 window.jarvis.onShowAudit(() => { document.getElementById("btnAudit").click(); });
 
+// First-run setup
+const setupOverlay = document.getElementById("setupOverlay");
+const setupKey = document.getElementById("setupKey");
+const setupGo = document.getElementById("setupGo");
+const btnAssistant = document.getElementById("setupAssistant");
+const btnSafe = document.getElementById("setupSafe");
+let setupMode = "assistant";
+
+function pickMode(mode) {
+  setupMode = mode;
+  btnAssistant.classList.toggle("sel", mode === "assistant");
+  btnSafe.classList.toggle("sel", mode === "safe");
+}
+btnAssistant.addEventListener("click", () => pickMode("assistant"));
+btnSafe.addEventListener("click", () => pickMode("safe"));
+
+setupKey.addEventListener("input", () => {
+  setupGo.disabled = setupKey.value.trim().length < 20;
+  document.getElementById("setupErr").textContent = "";
+});
+
+setupGo.addEventListener("click", async () => {
+  const key = setupKey.value.trim();
+  if (!key.startsWith("sk-ant-")) {
+    document.getElementById("setupErr").textContent = "מפתח לא תקין — הוא אמור להתחיל ב-sk-ant-";
+    return;
+  }
+  setupGo.disabled = true;
+  setupGo.textContent = "שומר...";
+  await window.jarvis.updateConfig({ anthropicApiKey: key, mode: setupMode });
+  modeBadge.textContent = setupMode.toUpperCase();
+  setupOverlay.classList.add("hidden");
+  addMsg("system", setupMode === "assistant"
+    ? "מוכן. תגיד לי מה לעשות — למשל: תפתח פנקס רשימות ותכתוב שלום."
+    : "מוכן במצב צפייה בלבד. לחץ על התג למעלה כדי לאפשר שליטה מלאה.");
+});
+
 // Init
 (async () => {
   const cfg = await window.jarvis.getConfig();
-  modeBadge.textContent = (cfg.mode || "safe").toUpperCase();
-  const state = await window.jarvis.getVoiceState();
-  updateState(state);
+  modeBadge.textContent = (cfg.mode || "assistant").toUpperCase();
+  updateState(await window.jarvis.getVoiceState());
+
   if (!cfg.anthropicApiKey) {
-    addMsg("system", "API key not set. Open Settings (S button) to configure your Anthropic API key.");
-  }
-  if ((cfg.mode || "safe") === "safe") {
-    addMsg("system", "מצב SAFE: ג'רביס יכול לראות את המסך, לפתוח אפליקציות וקישורים ולקרוא — אבל לא ללחוץ או להקליד. לחץ על תג המצב למעלה כדי לעבור ל-ASSISTANT ולאפשר שליטה מלאה.");
+    pickMode(cfg.mode === "safe" ? "safe" : "assistant");
+    setupOverlay.classList.remove("hidden");
+    setupKey.focus();
+  } else if (cfg.mode === "safe") {
+    addMsg("system", "מצב SAFE: ג'רביס רואה את המסך וקורא, אבל לא לוחץ ולא מקליד. לחץ על תג ה-SAFE למעלה כדי לאפשר שליטה מלאה.");
   }
 })();
 </script>
