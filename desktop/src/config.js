@@ -13,6 +13,14 @@ const WORKSPACE_DIRS = ["files", "downloads", "projects", "temp"];
 const DEFAULTS = {
   backendUrl: "https://jarvis-proxi.ben-mor-04-2012.workers.dev",
   userId: "effi",
+  // Which brain: "cloudflare" is free (Workers AI daily allowance),
+  // "anthropic" is Claude, metered.
+  provider: "cloudflare",
+  cfAccountId: "",
+  cfApiToken: "",
+  cfModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  cfVisionModel: "@cf/meta/llama-3.2-11b-vision-instruct",
+
   anthropicApiKey: "",
   model: "claude-opus-5",
   // How hard JARVIS thinks per turn. "low" is fastest and cheapest; "high" is

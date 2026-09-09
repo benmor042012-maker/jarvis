@@ -84,6 +84,28 @@ async function take_screenshot() {
   };
 }
 
+// A full-resolution PNG costs a lot of vision-model input. For the free brain
+// we downscale to a JPEG first; the description quality is unaffected at
+// 1024px and the request is a fraction of the size.
+async function shrinkScreenshot(pngPath, maxWidth = 1024) {
+  if (!IS_WIN || !pngPath) return null;
+  const out = pngPath.replace(/\.png$/i, `-${maxWidth}.jpg`);
+  const script = [
+    `Add-Type -AssemblyName System.Drawing`,
+    `$img=[System.Drawing.Image]::FromFile('${escapePS(pngPath)}')`,
+    `$w=[Math]::Min(${Number(maxWidth) || 1024},$img.Width); $h=[int]($img.Height*$w/$img.Width)`,
+    `$bmp=New-Object System.Drawing.Bitmap($w,$h); $g=[System.Drawing.Graphics]::FromImage($bmp)`,
+    `$g.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $g.DrawImage($img,0,0,$w,$h)`,
+    `$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }`,
+    `$p=New-Object System.Drawing.Imaging.EncoderParameters(1)`,
+    `$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]70)`,
+    `$bmp.Save('${escapePS(out)}',$enc,$p); $g.Dispose(); $bmp.Dispose(); $img.Dispose()`,
+  ].join("; ");
+  await runPS(script, 20000);
+  const buf = fs.readFileSync(out);
+  return { path: out, base64: buf.toString("base64"), media_type: "image/jpeg", bytes: buf.length };
+}
+
 function cleanupOldScreenshots(dir) {
   try {
     const files = fs.readdirSync(dir)
@@ -431,4 +453,4 @@ const ACTION_TYPES = {
 
 const UNDOABLE = new Set(["file_write", "file_delete"]);
 
-module.exports = { DEFS, RUNNERS, ACTION_TYPES, UNDOABLE };
+module.exports = { DEFS, RUNNERS, ACTION_TYPES, UNDOABLE, shrinkScreenshot };

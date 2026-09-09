@@ -323,12 +323,33 @@
     <div class="sub">שני דברים ואנחנו מוכנים. זה לוקח פחות מדקה.</div>
 
     <div class="setup-step">
-      <h2>1. מפתח API</h2>
-      <p>
-        זה מה שנותן לג'רביס את היכולת לחשוב. היכנס ל-<a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>,
-        צור מפתח, והדבק אותו כאן. הוא נשמר רק במחשב שלך.
-      </p>
-      <input type="password" id="setupKey" placeholder="sk-ant-..." autocomplete="off" dir="ltr">
+      <h2>1. המוח</h2>
+      <div class="choice" style="margin-bottom:12px">
+        <button id="setupBrainFree" class="sel">
+          <span class="t">חינמי — Cloudflare</span>
+          <span class="d">0 ₪ תמיד. מכסה יומית של בערך 40 שאלות או 3-4 משימות מורכבות, מתאפסת כל יום. קצת פחות חכם מ-Claude.</span>
+        </button>
+        <button id="setupBrainClaude">
+          <span class="t">Claude — בתשלום</span>
+          <span class="d">החכם ביותר. משלמים לפי שימוש דרך console.anthropic.com.</span>
+        </button>
+      </div>
+
+      <div id="setupFreeFields">
+        <p>
+          פעם אחת: היכנס ל-<a href="https://dash.cloudflare.com/sign-up" target="_blank">dash.cloudflare.com</a> (חשבון חינמי, בלי כרטיס אשראי).
+          <b>Account ID</b> מופיע בעמוד הראשי של החשבון בצד. <b>API Token</b>: פרופיל ← API Tokens ← Create Token ← התבנית <b>Workers AI</b> ← Create ← העתק.
+        </p>
+        <input type="text" id="setupCfAccount" placeholder="Account ID" autocomplete="off" dir="ltr" style="margin-bottom:8px">
+        <input type="password" id="setupCfToken" placeholder="API Token" autocomplete="off" dir="ltr">
+      </div>
+
+      <div id="setupClaudeFields" class="hidden">
+        <p>
+          היכנס ל-<a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>, צור מפתח, והדבק אותו כאן. נשמר רק במחשב שלך.
+        </p>
+        <input type="password" id="setupKey" placeholder="sk-ant-..." autocomplete="off" dir="ltr">
+      </div>
     </div>
 
     <div class="setup-step">
@@ -356,6 +377,21 @@
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <h2>Settings</h2>
     <button class="btn-icon" id="btnCloseSettings">X</button>
+  </div>
+  <div class="setting-row">
+    <label>המוח</label>
+    <select id="cfgProvider">
+      <option value="cloudflare">חינמי — Cloudflare Workers AI</option>
+      <option value="anthropic">Claude — בתשלום לפי שימוש</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>Cloudflare Account ID</label>
+    <input type="text" id="cfgCfAccount" dir="ltr">
+  </div>
+  <div class="setting-row">
+    <label>Cloudflare API Token<br><span style="font-size:11px;color:var(--text-dim)">Profile ← API Tokens ← Create ← Workers AI</span></label>
+    <input type="password" id="cfgCfToken" dir="ltr">
   </div>
   <div class="setting-row">
     <label>Anthropic API Key</label>
@@ -549,6 +585,10 @@ window.jarvis.onVoiceCommand((text) => {
 const USD_TO_ILS = 3.7;
 function ils(usd) { return (usd * USD_TO_ILS).toFixed(usd * USD_TO_ILS < 1 ? 2 : 1) + "₪"; }
 function showCost(res) {
+  if (res.provider === "cloudflare") {
+    document.getElementById("costBadge").textContent = "מוח חינמי · 0₪";
+    return;
+  }
   if (typeof res.cost === "number") {
     const last = [...chat.querySelectorAll(".msg.assistant")].pop();
     if (last) {
@@ -663,6 +703,9 @@ modeBadge.addEventListener("click", async () => {
 // Settings
 document.getElementById("btnSettings").addEventListener("click", async () => {
   const cfg = await window.jarvis.getConfig();
+  document.getElementById("cfgProvider").value = cfg.provider || "cloudflare";
+  document.getElementById("cfgCfAccount").value = cfg.cfAccountId || "";
+  document.getElementById("cfgCfToken").value = cfg.cfApiToken || "";
   document.getElementById("cfgApiKey").value = cfg.anthropicApiKey || "";
   document.getElementById("cfgBackendUrl").value = cfg.backendUrl || "";
   document.getElementById("cfgUserId").value = cfg.userId || "";
@@ -686,6 +729,9 @@ document.getElementById("cfgToken").addEventListener("click", (e) => e.target.se
 document.getElementById("btnCloseSettings").addEventListener("click", () => { document.getElementById("settingsPanel").classList.remove("visible"); });
 document.getElementById("btnSaveSettings").addEventListener("click", async () => {
   await window.jarvis.updateConfig({
+    provider: document.getElementById("cfgProvider").value,
+    cfAccountId: document.getElementById("cfgCfAccount").value.trim(),
+    cfApiToken: document.getElementById("cfgCfToken").value.trim(),
     anthropicApiKey: document.getElementById("cfgApiKey").value,
     backendUrl: document.getElementById("cfgBackendUrl").value,
     userId: document.getElementById("cfgUserId").value,
@@ -860,20 +906,44 @@ function pickMode(mode) {
 btnAssistant.addEventListener("click", () => pickMode("assistant"));
 btnSafe.addEventListener("click", () => pickMode("safe"));
 
-setupKey.addEventListener("input", () => {
-  setupGo.disabled = setupKey.value.trim().length < 20;
+let setupBrain = "cloudflare";
+const setupCfAccount = document.getElementById("setupCfAccount");
+const setupCfToken = document.getElementById("setupCfToken");
+function pickBrain(b) {
+  setupBrain = b;
+  document.getElementById("setupBrainFree").classList.toggle("sel", b === "cloudflare");
+  document.getElementById("setupBrainClaude").classList.toggle("sel", b === "anthropic");
+  document.getElementById("setupFreeFields").classList.toggle("hidden", b !== "cloudflare");
+  document.getElementById("setupClaudeFields").classList.toggle("hidden", b !== "anthropic");
+  validateSetup();
+}
+function validateSetup() {
+  const ok = setupBrain === "cloudflare"
+    ? setupCfAccount.value.trim().length >= 8 && setupCfToken.value.trim().length >= 8
+    : setupKey.value.trim().length >= 20;
+  setupGo.disabled = !ok;
   document.getElementById("setupErr").textContent = "";
-});
+}
+document.getElementById("setupBrainFree").addEventListener("click", () => pickBrain("cloudflare"));
+document.getElementById("setupBrainClaude").addEventListener("click", () => pickBrain("anthropic"));
+for (const el of [setupKey, setupCfAccount, setupCfToken]) el.addEventListener("input", validateSetup);
 
 setupGo.addEventListener("click", async () => {
-  const key = setupKey.value.trim();
-  if (!key.startsWith("sk-ant-")) {
-    document.getElementById("setupErr").textContent = "מפתח לא תקין — הוא אמור להתחיל ב-sk-ant-";
-    return;
+  const patch = { mode: setupMode, provider: setupBrain };
+  if (setupBrain === "anthropic") {
+    const key = setupKey.value.trim();
+    if (!key.startsWith("sk-ant-")) {
+      document.getElementById("setupErr").textContent = "מפתח לא תקין — הוא אמור להתחיל ב-sk-ant-";
+      return;
+    }
+    patch.anthropicApiKey = key;
+  } else {
+    patch.cfAccountId = setupCfAccount.value.trim();
+    patch.cfApiToken = setupCfToken.value.trim();
   }
   setupGo.disabled = true;
   setupGo.textContent = "שומר...";
-  await window.jarvis.updateConfig({ anthropicApiKey: key, mode: setupMode });
+  await window.jarvis.updateConfig(patch);
   modeBadge.textContent = setupMode.toUpperCase();
   setupOverlay.classList.add("hidden");
   addMsg("system", setupMode === "assistant"
@@ -961,12 +1031,18 @@ setInterval(refreshWeather, 15 * 60000);
   const cfg = await window.jarvis.getConfig();
   modeBadge.textContent = (cfg.mode || "assistant").toUpperCase();
   updateState(await window.jarvis.getVoiceState());
-  try { const u = await window.jarvis.getUsage(); showCost({ monthUsd: u.month.usd }); } catch {}
+  try { const u = await window.jarvis.getUsage(); showCost({ monthUsd: u.month.usd, provider: cfg.provider }); } catch {}
 
-  if (!cfg.anthropicApiKey) {
+  const hasBrain = cfg.provider === "anthropic"
+    ? !!cfg.anthropicApiKey
+    : !!(cfg.cfAccountId && cfg.cfApiToken) || (!cfg.provider && !!cfg.anthropicApiKey);
+  if (!hasBrain) {
     pickMode(cfg.mode === "safe" ? "safe" : "assistant");
+    // Someone who already has a Claude key set up keeps it; everyone else
+    // starts on the free brain.
+    pickBrain(cfg.anthropicApiKey && cfg.provider === "anthropic" ? "anthropic" : "cloudflare");
     setupOverlay.classList.remove("hidden");
-    setupKey.focus();
+    (setupBrain === "cloudflare" ? setupCfAccount : setupKey).focus();
   } else if (cfg.mode === "safe") {
     addMsg("system", "מצב SAFE: ג'רביס רואה את המסך וקורא, אבל לא לוחץ ולא מקליד. לחץ על תג ה-SAFE למעלה כדי לאפשר שליטה מלאה.");
   }

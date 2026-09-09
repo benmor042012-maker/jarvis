@@ -3,6 +3,8 @@ const { isAllowed, isTaskApprovable } = require("./permissions");
 const taskApproval = require("./task-approval");
 const connectors = require("./connectors");
 const usage = require("./usage");
+const cloudflare = require("./providers/cloudflare");
+const { shrinkScreenshot } = require("./tools/computer");
 const { log } = require("./audit");
 const { load } = require("./config");
 
@@ -126,6 +128,7 @@ async function callClaude(client, { model, system, messages, tools, mcpServers, 
 // Most specific first. The base class is APIError (this SDK has no
 // APIStatusError), and it carries the HTTP status.
 function describeApiError(e) {
+  if (e && e.provider === "cloudflare") return e.message; // already user-facing Hebrew
   if (e instanceof Anthropic.AuthenticationError) return "מפתח ה-API לא תקין. בדוק אותו בהגדרות (כפתור S).";
   if (e instanceof Anthropic.NotFoundError) return `לא נמצא: ${e.message}. ייתכן שהדגם שנבחר בהגדרות כבר לא קיים.`;
   if (e instanceof Anthropic.RateLimitError) return "יותר מדי בקשות כרגע. נסה שוב בעוד רגע.";
@@ -262,13 +265,20 @@ async function runAgent(toolRegistry, opts = {}) {
   }
   const spend = { usd: 0 };
   const out = await runAgentInner(toolRegistry, opts, spend);
-  return { ...out, cost: spend.usd, monthUsd: usage.thisMonth().usd };
+  const provider = opts.provider || cfg.provider || "anthropic";
+  return { ...out, cost: spend.usd, monthUsd: usage.thisMonth().usd, provider };
 }
 
 async function runAgentInner(toolRegistry, opts, spend) {
   const cfg = load();
+  const provider = opts.provider || cfg.provider || "anthropic";
+  const isFree = provider === "cloudflare";
+  const cfCfg = isFree ? { ...cfg, ...(opts.cf || {}) } : null;
   const apiKey = opts.apiKey || cfg.anthropicApiKey;
-  if (!apiKey) return { reply: "API key not configured. Set it in JARVIS settings.", toolTrace: [], aborted: false };
+  if (!isFree && !apiKey) return { reply: "לא מוגדר מפתח API של Claude. הגדר אותו בכפתור S, או עבור למוח החינמי.", toolTrace: [], aborted: false };
+  if (isFree && !(cfCfg.cfAccountId && cfCfg.cfApiToken)) {
+    return { reply: "המוח החינמי עוד לא מחובר. בכפתור S הדבק את ה-Account ID וה-API Token של Cloudflare.", toolTrace: [], aborted: false };
+  }
 
   const model = opts.model || cfg.model;
   const system = opts.system || DESKTOP_PERSONA;
@@ -278,11 +288,15 @@ async function runAgentInner(toolRegistry, opts, spend) {
   const requestApproval = opts.requestApproval || (() => Promise.resolve(false));
   const onProgress = opts.onProgress || (() => {});
 
-  const client = clientFor(apiKey);
+  const client = isFree ? null : clientFor(apiKey);
   const activeConnectors = opts.connectors || connectors.active();
-  const { servers: mcpServers, toolsets } = connectors.buildRequestParts(activeConnectors);
+  const { servers: mcpServers, toolsets } = connectors.buildRequestParts(isFree ? [] : activeConnectors);
   const toolDefs = [...toolRegistry.definitions(), ...toolsets];
   const toolTrace = [];
+  if (isFree && activeConnectors.length) {
+    // The MCP connector is a Claude API feature; the free brain cannot use it.
+    toolTrace.push({ tool: "connectors", blocked: true, reason: "not_available_on_free_brain" });
+  }
   _aborted = false;
   taskApproval.reset();
 
@@ -293,12 +307,14 @@ async function runAgentInner(toolRegistry, opts, spend) {
 
     let response;
     try {
-      response = await callClaude(client, { model, system, messages, tools: toolDefs, mcpServers, effort });
+      response = isFree
+        ? await cloudflare.chat(cfCfg, { systemText: system + SAFETY_APPENDIX, messages, tools: toolDefs, maxTokens: 2048 })
+        : await callClaude(client, { model, system, messages, tools: toolDefs, mcpServers, effort });
     } catch (e) {
       onProgress({ step: step + 1, maxSteps: MAX_STEPS, status: "done" });
       return { reply: describeApiError(e), toolTrace, aborted: false };
     }
-    spend.usd += usage.record(model, response.usage);
+    spend.usd += usage.record(isFree ? "free" : model, response.usage);
 
     const textParts = (response.content || []).filter((b) => b.type === "text").map((b) => b.text);
     const toolUses = (response.content || []).filter((b) => b.type === "tool_use");
@@ -375,7 +391,12 @@ async function runAgentInner(toolRegistry, opts, spend) {
       }
 
       try {
-        const result = await toolRegistry.run(tu.name, tu.input);
+        let result = await toolRegistry.run(tu.name, tu.input);
+        // The free brain pays for every image byte out of the daily allowance;
+        // a 1024px JPEG describes just as well as a full-size PNG.
+        if (isFree && result && result.base64 && result.path) {
+          try { const small = await shrinkScreenshot(result.path, 1024); if (small) result = { ...result, ...small }; } catch {}
+        }
         toolResults.push(buildToolResult(tu.id, tu.name, result));
         toolTrace.push({ tool: tu.name, input: tu.input, output: summarize(result) });
         log({ action: actionType, tool: tu.name, target: JSON.stringify(tu.input).slice(0, 200), result: "SUCCESS", detail: { undoable: toolRegistry.isUndoable(tu.name) } });

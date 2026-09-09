@@ -11,6 +11,7 @@ const USAGE_PATH = path.join(JARVIS_HOME, "usage.json");
 // USD per million tokens: [input, output]. Cache reads are ~0.1x input,
 // cache writes ~1.25x input.
 const PRICES = {
+  free: [0, 0], // Cloudflare Workers AI within the free daily allowance
   "claude-opus-5": [5, 25],
   "claude-sonnet-5": [2, 10],
   "claude-haiku-4-5": [1, 5],
