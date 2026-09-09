@@ -226,6 +226,8 @@ ipcMain.handle("set-mode", (_e, mode) => {
   return cfg;
 });
 
+ipcMain.handle("get-app-version", () => require("./package.json").version);
+
 ipcMain.handle("get-bridge-info", () => ({
   port: cfg.bridgePort,
   token: cfg.bridgeToken,

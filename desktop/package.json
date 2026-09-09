@@ -1,6 +1,6 @@
 {
   "name": "jarvis-desktop",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "JARVIS Desktop Agent — background service with voice wake word and computer control",
   "main": "main.js",
   "scripts": {

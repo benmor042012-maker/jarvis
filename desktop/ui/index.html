@@ -196,6 +196,7 @@
     <h1>J.A.R.V.I.S</h1>
     <span class="orb-indicator listening" id="orbIndicator"></span>
     <span class="status-badge listening" id="statusBadge">Listening</span>
+    <span class="status-badge" id="verBadge" title="גרסת הקוד שרצה עכשיו. אם היא לא משתנה אחרי התקנה — הגרסה הישנה עדיין רצה.">v—</span>
   </div>
   <div class="header-controls">
     <span class="status-badge" id="costBadge" title="הוצאה משוערת על ה-API החודש (לפי מחירון פומבי). החשבון הקובע הוא בקונסולה של Anthropic.">₪ —</span>
@@ -1047,6 +1048,7 @@ setInterval(refreshWeather, 15 * 60000);
   modeBadge.textContent = (cfg.mode || "assistant").toUpperCase();
   updateState(await window.jarvis.getVoiceState());
   try { const u = await window.jarvis.getUsage(); showCost({ monthUsd: u.month.usd, provider: cfg.provider }); } catch {}
+  try { document.getElementById("verBadge").textContent = "v" + (await window.jarvis.getAppVersion()); } catch {}
 
   const hasBrain = cfg.provider === "anthropic"
     ? !!cfg.anthropicApiKey

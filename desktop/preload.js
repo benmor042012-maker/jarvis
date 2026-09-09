@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("jarvis", {
 
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   getUsage: () => ipcRenderer.invoke("get-usage"),
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   systemStats: () => ipcRenderer.invoke("system-stats"),
   hudWeather: (place) => ipcRenderer.invoke("hud-weather", place),
 

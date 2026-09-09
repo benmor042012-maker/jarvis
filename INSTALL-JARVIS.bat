@@ -66,6 +66,14 @@ echo   [3/4] Components ready.
 REM ---------- 4. Desktop shortcut + launch ----------
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'JARVIS.lnk')); $s.TargetPath='%TARGET%\desktop\START-JARVIS.bat'; $s.WorkingDirectory='%TARGET%\desktop'; $s.Description='JARVIS'; $s.Save() } catch {}" >nul 2>nul
 
+REM ---------- close any JARVIS that is already running ----------
+REM Electron holds a single-instance lock: if an old copy is alive, the new one
+REM quits immediately and just re-shows the old window, so an update never loads.
+REM Matched on the command line so other Electron apps are left alone.
+echo   [*] Closing any running JARVIS...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*jarvis*' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >nul 2>nul
+powershell -NoProfile -Command "Start-Sleep -Milliseconds 900" >nul 2>nul
+
 echo   [4/4] Starting JARVIS...
 echo.
 echo   From now on, use the JARVIS shortcut on your desktop.
