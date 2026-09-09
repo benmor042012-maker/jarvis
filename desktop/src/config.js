@@ -19,6 +19,10 @@ const DEFAULTS = {
   // the API default and is slower. Medium keeps multi-step computer control
   // reliable without the long pauses.
   effort: "medium",
+  // Hard local ceiling on estimated API spend per calendar month, in USD.
+  // When reached, JARVIS stops calling the API until the next month or until
+  // the user raises it. 0 disables the ceiling.
+  monthlyCapUSD: 5,
   // Assistant, not safe: safe mode refuses every click and keystroke, so a
   // fresh install would look broken. The ASK/CONFIRM/HIGH_RISK/BLOCKED gates
   // are what keep this safe, not the mode.

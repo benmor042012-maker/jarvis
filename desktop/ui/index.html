@@ -198,6 +198,7 @@
     <span class="status-badge listening" id="statusBadge">Listening</span>
   </div>
   <div class="header-controls">
+    <span class="status-badge" id="costBadge" title="הוצאה משוערת על ה-API החודש (לפי מחירון פומבי). החשבון הקובע הוא בקונסולה של Anthropic.">₪ —</span>
     <span class="mode-badge" id="modeBadge" title="לחץ להחלפת מצב">SAFE</span>
     <button class="btn-icon" id="btnSettings" title="הגדרות">S</button>
     <button class="btn-icon" id="btnConnectors" title="חיבורים לשירותים">C</button>
@@ -392,6 +393,10 @@
     </select>
   </div>
   <div class="setting-row">
+    <label>תקרת הוצאה חודשית ($)<br><span style="font-size:11px;color:var(--text-dim)">כשמגיעים אליה ג'רביס מפסיק לפנות ל-API. 0 = בלי תקרה.</span></label>
+    <input type="text" id="cfgCap" style="width:100px" dir="ltr">
+  </div>
+  <div class="setting-row">
     <label>Wake Word</label>
     <select id="cfgWakeWord">
       <option value="true">Enabled</option>
@@ -511,6 +516,7 @@ async function send() {
     if (res.reply) {
       addMsg("assistant", res.reply, res.toolTrace);
       history.push({ role: "assistant", content: res.reply });
+      showCost(res);
     }
     if (res.aborted) addMsg("system", "Action stopped.");
   } catch (e) {
@@ -539,10 +545,28 @@ window.jarvis.onVoiceCommand((text) => {
   addMsg("user", text);
   history.push({ role: "user", content: text });
 });
-window.jarvis.onAgentReply(({ reply, toolTrace, aborted }) => {
+// Cost meter: estimated from public per-token prices; the console is authoritative.
+const USD_TO_ILS = 3.7;
+function ils(usd) { return (usd * USD_TO_ILS).toFixed(usd * USD_TO_ILS < 1 ? 2 : 1) + "₪"; }
+function showCost(res) {
+  if (typeof res.cost === "number") {
+    const last = [...chat.querySelectorAll(".msg.assistant")].pop();
+    if (last) {
+      const c = document.createElement("div");
+      c.className = "tool-trace";
+      c.textContent = `עלות משוערת: ${ils(res.cost)}`;
+      last.appendChild(c);
+    }
+  }
+  if (typeof res.monthUsd === "number") document.getElementById("costBadge").textContent = `החודש ≈ ${ils(res.monthUsd)}`;
+}
+
+window.jarvis.onAgentReply((res) => {
+  const { reply, toolTrace, aborted } = res;
   if (reply) {
     addMsg("assistant", reply, toolTrace);
     history.push({ role: "assistant", content: reply });
+    showCost(res);
   }
   if (aborted) addMsg("system", "Action stopped.");
 });
@@ -645,6 +669,7 @@ document.getElementById("btnSettings").addEventListener("click", async () => {
   document.getElementById("cfgModel").value = cfg.model || "";
   document.getElementById("cfgMode").value = cfg.mode || "safe";
   document.getElementById("cfgEffort").value = cfg.effort || "medium";
+  document.getElementById("cfgCap").value = cfg.monthlyCapUSD ?? 5;
   document.getElementById("cfgWakeWord").value = String(cfg.wakeWordEnabled);
   document.getElementById("cfgTts").value = String(cfg.ttsEnabled);
   document.getElementById("cfgLang").value = cfg.sttLang || "he-IL";
@@ -667,6 +692,7 @@ document.getElementById("btnSaveSettings").addEventListener("click", async () =>
     model: document.getElementById("cfgModel").value,
     mode: document.getElementById("cfgMode").value,
     effort: document.getElementById("cfgEffort").value,
+    monthlyCapUSD: Math.max(0, Number(document.getElementById("cfgCap").value) || 0),
     wakeWordEnabled: document.getElementById("cfgWakeWord").value === "true",
     ttsEnabled: document.getElementById("cfgTts").value === "true",
     sttLang: document.getElementById("cfgLang").value,
@@ -935,6 +961,7 @@ setInterval(refreshWeather, 15 * 60000);
   const cfg = await window.jarvis.getConfig();
   modeBadge.textContent = (cfg.mode || "assistant").toUpperCase();
   updateState(await window.jarvis.getVoiceState());
+  try { const u = await window.jarvis.getUsage(); showCost({ monthUsd: u.month.usd }); } catch {}
 
   if (!cfg.anthropicApiKey) {
     pickMode(cfg.mode === "safe" ? "safe" : "assistant");

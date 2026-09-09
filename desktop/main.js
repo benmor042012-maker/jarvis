@@ -159,17 +159,18 @@ function startVoice() {
 async function handleAgentMessage(text, history = []) {
   resetAbort();
   const messages = [...history, { role: "user", content: text }];
-  const { reply, toolTrace, aborted } = await runAgent(toolRegistry, {
+  const out = await runAgent(toolRegistry, {
     messages,
     mode: cfg.mode,
     requestApproval: (info) => requestUserApproval(info),
     onProgress: (p) => mainWindow?.webContents.send("agent-progress", p),
   });
-  mainWindow?.webContents.send("agent-reply", { reply, toolTrace, aborted });
+  const { reply } = out;
+  mainWindow?.webContents.send("agent-reply", out);
   if (reply && cfg.ttsEnabled && voice) {
     voice.speak(mainWindow, reply);
   }
-  return { reply, toolTrace, aborted };
+  return out;
 }
 
 async function requestUserApproval(info) {
@@ -229,6 +230,11 @@ ipcMain.handle("get-bridge-info", () => ({
   port: cfg.bridgePort,
   token: cfg.bridgeToken,
 }));
+
+ipcMain.handle("get-usage", () => {
+  const usage = require("./src/usage");
+  return { month: usage.thisMonth(), capUSD: cfg.monthlyCapUSD, usdToIls: usage.USD_TO_ILS };
+});
 
 ipcMain.handle("open-external", (_e, url) => {
   if (!/^https:\/\//i.test(String(url))) return false;

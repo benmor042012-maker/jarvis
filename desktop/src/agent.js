@@ -2,6 +2,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const { isAllowed, isTaskApprovable } = require("./permissions");
 const taskApproval = require("./task-approval");
 const connectors = require("./connectors");
+const usage = require("./usage");
 const { log } = require("./audit");
 const { load } = require("./config");
 
@@ -72,14 +73,25 @@ function supportsEffort(model) {
   return /^claude-/.test(String(model || "")) && !/haiku/.test(String(model || ""));
 }
 
+// Top-level automatic caching is rejected on some integrations. If the API
+// refuses it once, stop sending it for the rest of the process; the explicit
+// system breakpoint below still caches the expensive stable prefix.
+let autoCacheOk = true;
+
 async function callClaude(client, { model, system, messages, tools, mcpServers, effort }) {
   const params = {
     model,
     max_tokens: MAX_TOKENS,
-    system: system + SAFETY_APPENDIX,
+    // Tools render before system, so a breakpoint on the last system block
+    // caches the tool list and the persona together. Both are byte-identical
+    // every step, which is what makes the prefix reusable.
+    system: [{ type: "text", text: system + SAFETY_APPENDIX, cache_control: { type: "ephemeral" } }],
     messages,
     tools,
   };
+  // And let the API move a second breakpoint forward along the growing
+  // conversation so earlier steps of a long task are read from cache too.
+  if (autoCacheOk) params.cache_control = { type: "ephemeral" };
   // Lower effort means fewer, more consolidated tool calls, less preamble and
   // terser confirmations — faster and cheaper per turn.
   if (effort && supportsEffort(model)) params.output_config = { effort };
@@ -98,9 +110,17 @@ async function callClaude(client, { model, system, messages, tools, mcpServers, 
   }
   if (betas.length) params.betas = betas;
 
-  return betas.length
-    ? client.beta.messages.create(params)
-    : client.messages.create(params);
+  const send = (p) => (betas.length ? client.beta.messages.create(p) : client.messages.create(p));
+  try {
+    return await send(params);
+  } catch (e) {
+    if (autoCacheOk && e instanceof Anthropic.BadRequestError && /cache_control/i.test(String(e.message))) {
+      autoCacheOk = false;
+      delete params.cache_control;
+      return await send(params);
+    }
+    throw e;
+  }
 }
 
 // Most specific first. The base class is APIError (this SDK has no
@@ -232,6 +252,21 @@ async function discoverConnectorTools(connector, opts = {}) {
 
 async function runAgent(toolRegistry, opts = {}) {
   const cfg = load();
+  const cap = opts.monthlyCapUSD !== undefined ? opts.monthlyCapUSD : cfg.monthlyCapUSD;
+  if (usage.overCap(cap)) {
+    log({ action: "spend_cap_reached", tool: "agent", result: "BLOCKED", detail: { cap, monthUsd: usage.thisMonth().usd } });
+    return {
+      reply: `הגעתי לתקרת ההוצאה החודשית שהגדרת (${usage.fmt(cap)}). לא אפנה ל-API עד החודש הבא, או עד שתעלה את התקרה בהגדרות (כפתור S).`,
+      toolTrace: [], aborted: false, cost: 0, monthUsd: usage.thisMonth().usd, capped: true,
+    };
+  }
+  const spend = { usd: 0 };
+  const out = await runAgentInner(toolRegistry, opts, spend);
+  return { ...out, cost: spend.usd, monthUsd: usage.thisMonth().usd };
+}
+
+async function runAgentInner(toolRegistry, opts, spend) {
+  const cfg = load();
   const apiKey = opts.apiKey || cfg.anthropicApiKey;
   if (!apiKey) return { reply: "API key not configured. Set it in JARVIS settings.", toolTrace: [], aborted: false };
 
@@ -263,6 +298,7 @@ async function runAgent(toolRegistry, opts = {}) {
       onProgress({ step: step + 1, maxSteps: MAX_STEPS, status: "done" });
       return { reply: describeApiError(e), toolTrace, aborted: false };
     }
+    spend.usd += usage.record(model, response.usage);
 
     const textParts = (response.content || []).filter((b) => b.type === "text").map((b) => b.text);
     const toolUses = (response.content || []).filter((b) => b.type === "tool_use");
