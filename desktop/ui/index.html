@@ -386,6 +386,17 @@
     </select>
   </div>
   <div class="setting-row">
+    <label>איך להגיע ל-Cloudflare<br><span style="font-size:11px;color:var(--text-dim)">דרך ה-Worker שלך = בלי Account ID וטוקן במחשב</span></label>
+    <select id="cfgCfTransport">
+      <option value="direct">ישירות (Account ID + API Token)</option>
+      <option value="worker">דרך ה-Worker שלי (Backend URL + JARVIS_TOKEN)</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>JARVIS_TOKEN של ה-Worker<br><span style="font-size:11px;color:var(--text-dim)">Workers ← jarvis-proxi ← Settings ← Variables ← JARVIS_TOKEN</span></label>
+    <input type="password" id="cfgWorkerToken" dir="ltr">
+  </div>
+  <div class="setting-row">
     <label>Cloudflare Account ID</label>
     <input type="text" id="cfgCfAccount" dir="ltr">
   </div>
@@ -704,6 +715,8 @@ modeBadge.addEventListener("click", async () => {
 document.getElementById("btnSettings").addEventListener("click", async () => {
   const cfg = await window.jarvis.getConfig();
   document.getElementById("cfgProvider").value = cfg.provider || "cloudflare";
+  document.getElementById("cfgCfTransport").value = cfg.cfTransport || "direct";
+  document.getElementById("cfgWorkerToken").value = cfg.workerToken || "";
   document.getElementById("cfgCfAccount").value = cfg.cfAccountId || "";
   document.getElementById("cfgCfToken").value = cfg.cfApiToken || "";
   document.getElementById("cfgApiKey").value = cfg.anthropicApiKey || "";
@@ -730,6 +743,8 @@ document.getElementById("btnCloseSettings").addEventListener("click", () => { do
 document.getElementById("btnSaveSettings").addEventListener("click", async () => {
   await window.jarvis.updateConfig({
     provider: document.getElementById("cfgProvider").value,
+    cfTransport: document.getElementById("cfgCfTransport").value,
+    workerToken: document.getElementById("cfgWorkerToken").value.trim(),
     cfAccountId: document.getElementById("cfgCfAccount").value.trim(),
     cfApiToken: document.getElementById("cfgCfToken").value.trim(),
     anthropicApiKey: document.getElementById("cfgApiKey").value,

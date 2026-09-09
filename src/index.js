@@ -89,6 +89,10 @@ export default {
         return handleReminderList(request, env, cors);
       if (request.method === "POST" && path.match(/^\/api\/reminders\/[^/]+\/cancel$/))
         return handleReminderCancel(request, env, path, cors);
+      // Free brain for the desktop app: runs Workers AI on this account's
+      // free allowance so the desktop needs no Cloudflare credentials.
+      if (request.method === "POST" && path === "/ai/run")
+        return handleAiRun(request, env, cors);
       if (request.method === "GET" && path === "/") return textResp(banner(), cors);
       return new Response("Not found", { status: 404, headers: cors });
     } catch (e) {
@@ -106,7 +110,7 @@ export default {
 };
 
 function banner() {
-  return "JARVIS Worker\n\nendpoints:\n  POST /            chat\n  POST /chat        chat\n  POST /memory/retrieve\n  GET  /memory\n  DELETE /memory/:id\n  GET  /reminders/poll\n  GET  /cost-report\n  GET  /health\n  POST /api/memory/store\n  POST /api/memory/delete\n  POST /api/reminders\n  GET  /api/reminders\n  POST /api/reminders/:id/cancel\n";
+  return "JARVIS Worker\n\nendpoints:\n  POST /            chat\n  POST /chat        chat\n  POST /memory/retrieve\n  GET  /memory\n  DELETE /memory/:id\n  GET  /reminders/poll\n  GET  /cost-report\n  GET  /health\n  POST /api/memory/store\n  POST /api/memory/delete\n  POST /api/reminders\n  GET  /api/reminders\n  POST /api/reminders/:id/cancel\n  POST /ai/run          (X-Jarvis-Token) free brain for the desktop app\n";
 }
 
 async function handleChat(request, env, ctx, cors) {
@@ -253,6 +257,49 @@ async function handleReminderList(request, env, cors) {
   const userId = url.searchParams.get("userId") || "effi";
   const result = await reminder_list(env, userId);
   return json(result, 200, cors);
+}
+
+// Constant-time string compare; Workers have no Node timingSafeEqual.
+function tokenMatches(given, expected) {
+  if (typeof given !== "string" || typeof expected !== "string" || !expected) return false;
+  if (given.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+// POST /ai/run  { model: "@cf/...", input: {...} }  ->  { success, result }
+// Gated by the JARVIS_TOKEN variable: without it the endpoint refuses rather
+// than expose the account's AI allowance to anyone who finds the URL.
+async function handleAiRun(request, env, cors) {
+  if (!env.JARVIS_TOKEN) {
+    return json({ success: false, errors: [{ message: "JARVIS_TOKEN is not set on this Worker" }] }, 503, cors);
+  }
+  const given = request.headers.get("x-jarvis-token") || "";
+  if (!tokenMatches(given, env.JARVIS_TOKEN)) {
+    return json({ success: false, errors: [{ message: "unauthorized" }] }, 401, cors);
+  }
+  const rl = checkRateLimit("ai-run", 60);
+  if (!rl.allowed) return json({ success: false, errors: [{ message: "rate limit" }] }, 429, cors);
+
+  let body;
+  try { body = await request.json(); } catch { return json({ success: false, errors: [{ message: "bad json" }] }, 400, cors); }
+  const model = String(body.model || "");
+  if (!/^@(cf|hf)\/[\w.-]+\/[\w.-]+$/.test(model)) {
+    return json({ success: false, errors: [{ message: "model must look like @cf/vendor/name" }] }, 400, cors);
+  }
+  if (!body.input || typeof body.input !== "object") {
+    return json({ success: false, errors: [{ message: "input object required" }] }, 400, cors);
+  }
+
+  try {
+    const result = await env.AI.run(model, body.input);
+    return json({ success: true, result }, 200, cors);
+  } catch (e) {
+    const message = String(e?.message || e);
+    const quota = /neuron|quota|exceed|allocation/i.test(message);
+    return json({ success: false, errors: [{ message }] }, quota ? 429 : 502, cors);
+  }
 }
 
 async function handleReminderCancel(request, env, path, cors) {

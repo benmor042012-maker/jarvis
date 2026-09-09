@@ -45,7 +45,7 @@ export function corsHeaders(request, env) {
     "Access-Control-Allow-Origin": allowOrigin,
     "Vary": "Origin",
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type,X-Jarvis-Token",
     "Access-Control-Max-Age": "86400",
   };
 }

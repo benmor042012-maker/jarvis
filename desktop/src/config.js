@@ -16,6 +16,11 @@ const DEFAULTS = {
   // Which brain: "cloudflare" is free (Workers AI daily allowance),
   // "anthropic" is Claude, metered.
   provider: "cloudflare",
+  // "direct": Cloudflare account ID + API token on this machine.
+  // "worker": go through the user's own deployed Worker (backendUrl) with its
+  //           JARVIS_TOKEN; no Cloudflare credentials stored here at all.
+  cfTransport: "direct",
+  workerToken: "",
   cfAccountId: "",
   cfApiToken: "",
   cfModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",

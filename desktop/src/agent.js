@@ -276,8 +276,13 @@ async function runAgentInner(toolRegistry, opts, spend) {
   const cfCfg = isFree ? { ...cfg, ...(opts.cf || {}) } : null;
   const apiKey = opts.apiKey || cfg.anthropicApiKey;
   if (!isFree && !apiKey) return { reply: "לא מוגדר מפתח API של Claude. הגדר אותו בכפתור S, או עבור למוח החינמי.", toolTrace: [], aborted: false };
-  if (isFree && !(cfCfg.cfAccountId && cfCfg.cfApiToken)) {
-    return { reply: "המוח החינמי עוד לא מחובר. בכפתור S הדבק את ה-Account ID וה-API Token של Cloudflare.", toolTrace: [], aborted: false };
+  if (isFree && !cloudflare.isConfigured(cfCfg)) {
+    return {
+      reply: (cfCfg.cfTransport || "direct") === "worker"
+        ? "המוח החינמי דרך ה-Worker עוד לא מחובר. בכפתור S ודא שיש כתובת Worker ו-JARVIS_TOKEN."
+        : "המוח החינמי עוד לא מחובר. בכפתור S הדבק את ה-Account ID וה-API Token של Cloudflare.",
+      toolTrace: [], aborted: false,
+    };
   }
 
   const model = opts.model || cfg.model;

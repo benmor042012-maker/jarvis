@@ -1,10 +1,18 @@
-// Free brain: Cloudflare Workers AI through its OpenAI-compatible endpoint.
+// Free brain: Cloudflare Workers AI.
 //
 // Free allowance is 10,000 neurons per day per account; past that the request
-// fails until the next day (no charge is ever made on the free plan). The
-// agent loop speaks Anthropic content blocks, so this adapter converts both
-// directions: Anthropic messages/tools -> OpenAI chat completions, and the
-// completion back into { content: [...blocks], stop_reason, usage }.
+// fails until the next day (no charge is ever made on the free plan).
+//
+// Two transports, same models, same allowance:
+//   direct — https://api.cloudflare.com/.../ai/run/{model} with the user's
+//            Account ID + API token.
+//   worker — the user's own deployed Worker (POST /ai/run), which calls
+//            env.AI.run() itself. Needs only the Worker URL and its
+//            JARVIS_TOKEN; no Cloudflare credentials on this machine at all.
+//
+// Both hit the raw "run" API, whose input schema is exactly the one checked
+// for these models: messages are { role, content:<string> } and nothing else,
+// so tools are described in the system prompt and calls travel as JSON text.
 //
 // Vision: the chat model cannot see images, so each screenshot is described
 // once by the vision model and substituted as text. Descriptions are memoized
@@ -28,34 +36,68 @@ function providerError(message, extra = {}) {
   return e;
 }
 
-function isQuota(status, body) {
-  const text = JSON.stringify(body || "").toLowerCase();
-  return status === 429 || /neuron|quota|exceed|limit|allocation/.test(text);
+function isConfigured(cfg) {
+  if ((cfg.cfTransport || "direct") === "worker") return !!(cfg.backendUrl && cfg.workerToken);
+  return !!(cfg.cfAccountId && cfg.cfApiToken);
 }
 
-async function post(cfg, path, body) {
-  if (!cfg.cfAccountId || !cfg.cfApiToken) {
-    throw providerError("המוח החינמי לא מוגדר. צריך Account ID ו-API Token של Cloudflare בהגדרות (כפתור S).", { code: "unconfigured" });
+function isQuota(status, body) {
+  const text = JSON.stringify(body || "").toLowerCase();
+  return status === 429 || /neuron|quota|exceed|allocation/.test(text);
+}
+
+// Runs one model. Returns the "result" object Workers AI produces.
+async function run(cfg, model, input) {
+  const transport = cfg.cfTransport || "direct";
+  let res;
+  if (transport === "worker") {
+    const base = String(cfg.backendUrl || "").replace(/\/+$/, "");
+    if (!base || !cfg.workerToken) {
+      throw providerError("המוח החינמי דרך ה-Worker לא מוגדר: צריך את כתובת ה-Worker ואת ה-JARVIS_TOKEN שלו בהגדרות (כפתור S).", { code: "unconfigured" });
+    }
+    res = await fetch(`${base}/ai/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-jarvis-token": cfg.workerToken },
+      body: JSON.stringify({ model, input }),
+    });
+  } else {
+    if (!cfg.cfAccountId || !cfg.cfApiToken) {
+      throw providerError("המוח החינמי לא מוגדר. צריך Account ID ו-API Token של Cloudflare בהגדרות (כפתור S).", { code: "unconfigured" });
+    }
+    res = await fetch(`${API}/${encodeURIComponent(cfg.cfAccountId)}/ai/run/${model}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${cfg.cfApiToken}` },
+      body: JSON.stringify(input),
+    });
   }
-  const res = await fetch(`${API}/${encodeURIComponent(cfg.cfAccountId)}/ai/${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${cfg.cfApiToken}` },
-    body: JSON.stringify(body),
-  });
-  let data;
+
   const text = await res.text();
+  let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
   if (!res.ok || data.success === false) {
+    const msg = data?.errors?.[0]?.message || data?.error?.message || data?.error || data.raw || `HTTP ${res.status}`;
     if (res.status === 401 || res.status === 403) {
-      throw providerError("Cloudflare דחה את ה-API Token. ודא שהטוקן נכון ושיש לו הרשאת Workers AI.", { code: "auth", status: res.status });
+      throw providerError(
+        transport === "worker"
+          ? "ה-Worker דחה את ה-JARVIS_TOKEN. ודא שהערך בהגדרות ג'רביס זהה למשתנה JARVIS_TOKEN ב-Worker."
+          : "Cloudflare דחה את ה-API Token. ודא שהטוקן נכון ושיש לו הרשאת Workers AI.",
+        { code: "auth", status: res.status }
+      );
+    }
+    if (res.status === 503 && /JARVIS_TOKEN/.test(String(msg))) {
+      throw providerError("ב-Worker שלך לא מוגדר משתנה JARVIS_TOKEN. הוסף אותו ב-Settings של ה-Worker ופרוס מחדש.", { code: "worker_unconfigured", status: 503 });
+    }
+    if (res.status === 404 && transport === "worker") {
+      throw providerError("ה-Worker שלך עדיין לא כולל את נקודת הקצה /ai/run. צריך לפרוס אותו מחדש מהקוד המעודכן.", { code: "worker_outdated", status: 404 });
     }
     if (isQuota(res.status, data)) {
       throw providerError("המכסה החינמית היומית של Cloudflare נגמרה (10,000 נוירונים). היא מתאפסת בחצות UTC — ג'רביס יחזור לעבוד מחר. לא חויבת בכלום.", { code: "quota", status: res.status });
     }
-    const msg = data?.errors?.[0]?.message || data?.error?.message || data.raw || `HTTP ${res.status}`;
-    throw providerError(`שגיאה מ-Cloudflare: ${String(msg).slice(0, 200)}`, { code: "http", status: res.status });
+    throw providerError(`שגיאה מ-Cloudflare: ${String(msg).slice(0, 300)}`, { code: "http", status: res.status, detail: String(msg) });
   }
-  return data;
+  // Direct API wraps as { success, result }; the Worker proxy mirrors that.
+  return data.result !== undefined ? data.result : data;
 }
 
 // --- vision -------------------------------------------------------------
@@ -63,26 +105,40 @@ async function post(cfg, path, body) {
 async function describeImage(cfg, image) {
   const key = crypto.createHash("sha1").update(image.data).digest("hex");
   if (describeCache.has(key)) return describeCache.get(key);
-  const data = await post(cfg, "v1/chat/completions", {
-    model: cfg.cfVisionModel || DEFAULT_VISION,
-    max_tokens: 900,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: DESCRIBE_PROMPT },
-          { type: "image_url", image_url: { url: `data:${image.media_type || "image/png"};base64,${image.data}` } },
-        ],
-      },
-    ],
-  });
-  const text = (data?.choices?.[0]?.message?.content || data?.result?.response || "").trim() || "(no description)";
+  const model = cfg.cfVisionModel || DEFAULT_VISION;
+  const mediaType = image.media_type || "image/png";
+
+  let result;
+  try {
+    // Documented current form: a data: URI inside the message content.
+    result = await run(cfg, model, {
+      max_tokens: 900,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: DESCRIBE_PROMPT },
+            { type: "image_url", image_url: { url: `data:${mediaType};base64,${image.data}` } },
+          ],
+        },
+      ],
+    });
+  } catch (e) {
+    // Older schema: prompt + byte array. Only worth trying on a schema rejection.
+    if (e.code !== "http" || !/input|schema|content|messages/i.test(String(e.detail || e.message))) throw e;
+    result = await run(cfg, model, {
+      prompt: DESCRIBE_PROMPT,
+      image: Array.from(Buffer.from(image.data, "base64")),
+      max_tokens: 900,
+    });
+  }
+  const text = String(result?.response || result?.choices?.[0]?.message?.content || "").trim() || "(no description)";
   if (describeCache.size >= MAX_CACHE) describeCache.delete(describeCache.keys().next().value);
   describeCache.set(key, text);
   return text;
 }
 
-// --- Anthropic -> OpenAI ----------------------------------------------------
+// --- Anthropic -> Workers AI messages --------------------------------------
 
 async function blockText(cfg, block) {
   if (!block) return "";
@@ -105,21 +161,17 @@ async function toolResultText(cfg, tr) {
   return "";
 }
 
-// Every message is { role, content: <string> } and nothing else.
-//
-// The model's input schema accepts only string or [{type,text}] content, and
-// has no place for tool_calls / tool_call_id, so the native OpenAI tool
-// protocol is rejected outright (a null content on an assistant turn fails
-// too). Tools are therefore described in the system prompt and calls travel as
-// JSON in the message text, which validates on any chat model.
+// Every message is { role, content: <string> } and nothing else. The schema
+// has no place for tool_calls / tool_call_id and rejects null content, so the
+// assistant's own call is echoed back as the JSON it was asked to emit and
+// results come back as user text tagged with the call id.
 async function convertMessages(cfg, systemText, messages) {
   const out = [{ role: "system", content: systemText }];
   const push = (role, content) => {
     const text = String(content == null ? "" : content);
     if (!text) return;
     const prev = out[out.length - 1];
-    // The schema wants alternating turns; merge same-role neighbours.
-    if (prev && prev.role === role) prev.content += "\n" + text;
+    if (prev && prev.role === role) prev.content += "\n" + text; // keep turns alternating
     else out.push({ role, content: text });
   };
 
@@ -128,8 +180,7 @@ async function convertMessages(cfg, systemText, messages) {
       if (typeof m.content === "string") { push("user", m.content); continue; }
       for (const b of m.content || []) {
         if (b.type === "tool_result") {
-          const body = await toolResultText(cfg, b);
-          push("user", `[TOOL RESULT ${b.tool_use_id || ""}]\n${body}`);
+          push("user", `[TOOL RESULT ${b.tool_use_id || ""}]\n${await toolResultText(cfg, b)}`);
         } else {
           push("user", await blockText(cfg, b));
         }
@@ -139,7 +190,6 @@ async function convertMessages(cfg, systemText, messages) {
       const parts = [];
       for (const b of m.content || []) {
         if (b.type === "text") parts.push(b.text || "");
-        // Echo the model's own call back as the same JSON it is asked to emit.
         else if (b.type === "tool_use") parts.push(JSON.stringify({ tool: b.name, input: b.input || {} }));
       }
       push("assistant", parts.filter(Boolean).join("\n"));
@@ -148,14 +198,7 @@ async function convertMessages(cfg, systemText, messages) {
   return out;
 }
 
-function convertTools(tools) {
-  return (tools || [])
-    .filter((t) => t && t.name && t.input_schema) // drops mcp_toolset entries; connectors are Anthropic-only
-    .map((t) => ({ type: "function", function: { name: t.name, description: t.description || "", parameters: t.input_schema } }));
-}
-
-// Compact manual appended to the system prompt, since tools are not sent as a
-// request parameter.
+// Compact manual appended to the system prompt; tools are not a request parameter.
 function toolManual(tools) {
   const defs = (tools || []).filter((t) => t && t.name && t.input_schema);
   if (!defs.length) return "";
@@ -182,14 +225,13 @@ Never invent a tool name that is not in the list above.
 </tools>`;
 }
 
-// --- OpenAI -> Anthropic ----------------------------------------------------
+// --- Workers AI result -> Anthropic blocks ---------------------------------
 
 let callSeq = 0;
 function nextId() { return `call_${Date.now().toString(36)}_${++callSeq}`; }
 
-// Tool calls arrive as text. Accept the shape we ask for, plus the shapes open
-// models drift into: a ```json fence, an XML-ish <function=> block, or the
-// object buried in a sentence. Only names that actually exist are honoured.
+// Accept the shape we ask for plus the ones open models drift into. Only names
+// that actually exist are honoured.
 function parseTextToolCalls(text, knownNames) {
   const calls = [];
   const s = String(text || "").trim();
@@ -205,7 +247,6 @@ function parseTextToolCalls(text, knownNames) {
     const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fence) candidates.push(fence[1].trim());
     candidates.push(s);
-    // Longest balanced {...} run anywhere in the text.
     const first = s.indexOf("{");
     const last = s.lastIndexOf("}");
     if (first !== -1 && last > first) candidates.push(s.slice(first, last + 1));
@@ -225,26 +266,32 @@ function parseTextToolCalls(text, knownNames) {
   return calls.filter((c) => knownNames.has(c.name));
 }
 
+// Normalises either the raw-run result ({ response, tool_calls?, usage? }) or
+// an OpenAI-style completion ({ choices }) into Anthropic content blocks.
 function convertResponse(data, knownNames) {
-  const choice = data?.choices?.[0];
-  const msg = choice?.message || {};
-  const content = [];
-  let calls = [];
+  const raw = data && data.result !== undefined ? data.result : data;
+  const choiceMsg = raw?.choices?.[0]?.message;
+  let text = typeof raw?.response === "string" ? raw.response
+    : typeof choiceMsg?.content === "string" ? choiceMsg.content : "";
+  const nativeCalls = raw?.tool_calls || choiceMsg?.tool_calls || [];
 
-  for (const tc of msg.tool_calls || []) {
-    let input = {};
-    try { input = JSON.parse(tc.function?.arguments || "{}"); } catch { input = {}; }
-    calls.push({ id: tc.id || nextId(), name: tc.function?.name, input });
+  let calls = [];
+  for (const tc of nativeCalls) {
+    const name = tc.name || tc.function?.name;
+    let input = tc.arguments ?? tc.function?.arguments ?? {};
+    if (typeof input === "string") { try { input = JSON.parse(input); } catch { input = {}; } }
+    if (name && knownNames.has(name)) calls.push({ id: tc.id || nextId(), name, input });
   }
-  let text = typeof msg.content === "string" ? msg.content : "";
   if (!calls.length) {
     const parsed = parseTextToolCalls(text, knownNames);
     if (parsed.length) { calls = parsed.map((c) => ({ id: nextId(), ...c })); text = ""; }
   }
+
+  const content = [];
   if (text.trim()) content.push({ type: "text", text: text.trim() });
   for (const c of calls) content.push({ type: "tool_use", id: c.id, name: c.name, input: c.input });
 
-  const u = data?.usage || {};
+  const u = raw?.usage || {};
   return {
     content,
     stop_reason: calls.length ? "tool_use" : "end_turn",
@@ -257,12 +304,11 @@ function convertResponse(data, knownNames) {
 async function chat(cfg, { systemText, messages, tools, maxTokens }) {
   const defs = (tools || []).filter((t) => t && t.name && t.input_schema);
   const knownNames = new Set(defs.map((t) => t.name));
-  const data = await post(cfg, "v1/chat/completions", {
-    model: cfg.cfModel || DEFAULT_MODEL,
+  const result = await run(cfg, cfg.cfModel || DEFAULT_MODEL, {
     max_tokens: Math.min(maxTokens || 2048, 4096),
     messages: await convertMessages(cfg, systemText + toolManual(defs), messages),
   });
-  return convertResponse(data, knownNames);
+  return convertResponse(result, knownNames);
 }
 
-module.exports = { chat, convertMessages, convertTools, toolManual, convertResponse, parseTextToolCalls, describeImage, DEFAULT_MODEL, DEFAULT_VISION };
+module.exports = { chat, run, isConfigured, convertMessages, toolManual, convertResponse, parseTextToolCalls, describeImage, DEFAULT_MODEL, DEFAULT_VISION };
