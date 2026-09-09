@@ -67,7 +67,12 @@ function supportsFallbacks(model) {
   return /^claude-(opus-5|fable-)/.test(String(model || ""));
 }
 
-async function callClaude(client, { model, system, messages, tools, mcpServers }) {
+// Haiku rejects output_config.effort outright.
+function supportsEffort(model) {
+  return /^claude-/.test(String(model || "")) && !/haiku/.test(String(model || ""));
+}
+
+async function callClaude(client, { model, system, messages, tools, mcpServers, effort }) {
   const params = {
     model,
     max_tokens: MAX_TOKENS,
@@ -75,6 +80,9 @@ async function callClaude(client, { model, system, messages, tools, mcpServers }
     messages,
     tools,
   };
+  // Lower effort means fewer, more consolidated tool calls, less preamble and
+  // terser confirmations — faster and cheaper per turn.
+  if (effort && supportsEffort(model)) params.output_config = { effort };
   const betas = [];
 
   if (mcpServers && mcpServers.length) {
@@ -231,6 +239,7 @@ async function runAgent(toolRegistry, opts = {}) {
   const system = opts.system || DESKTOP_PERSONA;
   const messages = [...(opts.messages || [])];
   const mode = opts.mode || cfg.mode || "safe";
+  const effort = opts.effort || cfg.effort || "medium";
   const requestApproval = opts.requestApproval || (() => Promise.resolve(false));
   const onProgress = opts.onProgress || (() => {});
 
@@ -249,7 +258,7 @@ async function runAgent(toolRegistry, opts = {}) {
 
     let response;
     try {
-      response = await callClaude(client, { model, system, messages, tools: toolDefs, mcpServers });
+      response = await callClaude(client, { model, system, messages, tools: toolDefs, mcpServers, effort });
     } catch (e) {
       onProgress({ step: step + 1, maxSteps: MAX_STEPS, status: "done" });
       return { reply: describeApiError(e), toolTrace, aborted: false };

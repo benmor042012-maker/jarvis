@@ -230,6 +230,39 @@ ipcMain.handle("get-bridge-info", () => ({
   token: cfg.bridgeToken,
 }));
 
+ipcMain.handle("open-external", (_e, url) => {
+  if (!/^https:\/\//i.test(String(url))) return false;
+  const { shell } = require("electron");
+  return shell.openExternal(url).then(() => true).catch(() => false);
+});
+
+// --- HUD live data ---
+ipcMain.handle("system-stats", async () => {
+  const out = { disk: null, platform: process.platform };
+  try {
+    const fs = require("fs");
+    const root = process.platform === "win32" ? "C:\\" : "/";
+    const s = await fs.promises.statfs(root);
+    const total = s.blocks * s.bsize;
+    const free = s.bavail * s.bsize;
+    out.disk = {
+      totalGB: Math.round(total / 1e9),
+      freeGB: Math.round(free / 1e9),
+      usedPct: total ? Math.round(((total - free) / total) * 100) : 0,
+    };
+  } catch {}
+  return out;
+});
+
+ipcMain.handle("hud-weather", async (_e, place) => {
+  try {
+    const { RUNNERS } = require("./src/tools/web");
+    return await RUNNERS.weather({ location: place || "Tel Aviv" });
+  } catch (e) {
+    return { error: String(e.message || e) };
+  }
+});
+
 // --- Connectors (remote MCP servers) ---
 ipcMain.handle("connectors-list", () => connectors.loadAll());
 

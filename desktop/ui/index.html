@@ -7,47 +7,88 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #0a0e17; --surface: #111827; --border: #1e293b;
-    --text: #e2e8f0; --text-dim: #94a3b8; --accent: #3b82f6;
+    --bg: #04070b; --surface: rgba(8,20,28,0.82); --border: rgba(34,230,255,0.22);
+    --text: #d9f8ff; --text-dim: #6fb6c4; --accent: #22e6ff; --accent-dim: #0f7f90;
     --safe: #22c55e; --ask: #eab308; --risk: #f97316; --blocked: #ef4444;
-    --orb-glow: rgba(59,130,246,0.3);
+    --glow: 0 0 10px rgba(34,230,255,0.55), 0 0 28px rgba(34,230,255,0.18);
   }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body { font-family: 'Consolas', 'Segoe UI', monospace; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden;
+    background-image: radial-gradient(ellipse at center, rgba(34,230,255,0.06) 0%, rgba(0,0,0,0) 55%),
+      linear-gradient(rgba(34,230,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(34,230,255,0.035) 1px, transparent 1px);
+    background-size: 100% 100%, 28px 28px, 28px 28px; }
 
-  /* Header */
-  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
-  .header h1 { font-size: 18px; font-weight: 600; }
+  /* HUD grid */
+  .hud { display: grid; grid-template-columns: 240px minmax(0,1fr) 240px; grid-template-rows: 54px minmax(0,1fr) auto auto; height: 100vh; gap: 0 14px; padding: 0 14px 12px; }
+  .header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 10px 6px; border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
+  .header h1 { font-size: 17px; font-weight: 700; letter-spacing: 6px; color: var(--accent); text-shadow: var(--glow); }
   .header-controls { display: flex; gap: 8px; -webkit-app-region: no-drag; }
-  .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; }
-  .status-badge.listening { background: rgba(34,197,94,0.15); color: var(--safe); }
-  .status-badge.active { background: rgba(59,130,246,0.15); color: var(--accent); }
-  .status-badge.paused { background: rgba(148,163,184,0.15); color: var(--text-dim); }
-  .status-badge.stopped { background: rgba(239,68,68,0.15); color: var(--blocked); }
-  .status-badge.processing { background: rgba(234,179,8,0.15); color: var(--ask); }
-  .mode-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-dim); }
-  .mode-badge:hover { border-color: var(--accent); }
-  .btn-icon { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
-  .btn-icon:hover { background: var(--surface); border-color: var(--accent); color: var(--text); }
-  .btn-stop { background: var(--blocked); color: white; border-color: var(--blocked); font-weight: 700; font-size: 12px; width: auto; padding: 0 12px; }
-  .btn-stop:hover { opacity: 0.9; }
+  .status-badge { padding: 3px 10px; border: 1px solid var(--border); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+  .status-badge.listening { color: var(--accent); border-color: var(--accent); }
+  .status-badge.active { color: #fff; background: rgba(34,230,255,0.18); border-color: var(--accent); }
+  .status-badge.paused { color: var(--text-dim); }
+  .status-badge.stopped { color: var(--blocked); border-color: var(--blocked); }
+  .status-badge.processing { color: var(--ask); border-color: var(--ask); }
+  .mode-badge { padding: 3px 10px; font-size: 11px; letter-spacing: 2px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--accent); }
+  .mode-badge:hover { box-shadow: var(--glow); }
+  .btn-icon { width: 30px; height: 30px; border: 1px solid var(--border); background: transparent; color: var(--accent); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; letter-spacing: 1px; }
+  .btn-icon:hover { box-shadow: var(--glow); }
+  .btn-stop { background: rgba(239,68,68,0.15); color: var(--blocked); border-color: var(--blocked); font-weight: 700; font-size: 11px; width: auto; padding: 0 10px; }
+  .btn-stop:hover { background: var(--blocked); color: #fff; box-shadow: 0 0 14px rgba(239,68,68,0.6); }
+
+  /* Side panels */
+  .side { grid-row: 2 / 5; display: flex; flex-direction: column; gap: 14px; padding-top: 14px; overflow: hidden; }
+  .panel { border: 1px solid var(--border); padding: 12px; position: relative; background: rgba(4,7,11,0.5); }
+  .panel::before, .panel::after { content: ""; position: absolute; width: 10px; height: 10px; border-color: var(--accent); border-style: solid; }
+  .panel::before { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+  .panel::after { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+  .panel .lbl { font-size: 10px; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 6px; }
+  .date .mon { font-size: 12px; letter-spacing: 4px; color: var(--accent); text-transform: uppercase; }
+  .date .day { font-size: 46px; font-weight: 700; line-height: 1; color: var(--accent); text-shadow: var(--glow); margin: 4px 0; }
+  .date .wk { font-size: 12px; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; }
+  .date .clk { font-size: 22px; letter-spacing: 3px; color: var(--text); margin-top: 8px; direction: ltr; text-align: right; }
+  .gauge { display: flex; align-items: center; gap: 12px; }
+  .ring { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; position: relative; flex: none;
+    background: conic-gradient(var(--accent) calc(var(--v,0) * 1%), rgba(34,230,255,0.12) 0); box-shadow: var(--glow); }
+  .ring::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--bg); }
+  .ring span { position: relative; z-index: 1; font-size: 13px; color: var(--accent); }
+  .gauge .txt { font-size: 12px; line-height: 1.7; color: var(--text-dim); }
+  .gauge .txt b { color: var(--text); font-weight: 400; }
+  .links { display: flex; flex-direction: column; gap: 2px; }
+  .links a { color: var(--text); text-decoration: none; font-size: 12px; letter-spacing: 1px; padding: 4px 6px; border-right: 2px solid transparent; cursor: pointer; }
+  .links a:hover { color: var(--accent); border-right-color: var(--accent); text-shadow: var(--glow); }
+  .wx .t { font-size: 34px; color: var(--accent); text-shadow: var(--glow); line-height: 1; }
+  .wx .d { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.6; }
+
+  /* Reactor rings behind the chat */
+  .center { grid-column: 2; grid-row: 2; position: relative; min-height: 0; }
+  .rings { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .rings div { position: absolute; border-radius: 50%; border: 1px solid rgba(34,230,255,0.25); }
+  .rings .r1 { width: 78%; aspect-ratio: 1; max-width: 560px; border-style: dashed; animation: spin 90s linear infinite; }
+  .rings .r2 { width: 62%; aspect-ratio: 1; max-width: 440px; border-width: 2px; border-color: rgba(34,230,255,0.35) transparent; animation: spin 40s linear infinite reverse; }
+  .rings .r3 { width: 46%; aspect-ratio: 1; max-width: 330px; border-style: dotted; border-width: 3px; animation: spin 60s linear infinite; }
+  .rings .core { width: 30%; aspect-ratio: 1; max-width: 210px; border: none; background: radial-gradient(circle, rgba(34,230,255,0.28) 0%, rgba(34,230,255,0.08) 45%, transparent 70%); animation: breathe 3.5s ease-in-out infinite; }
+  .rings.busy .r2 { animation-duration: 6s; }
+  .rings.busy .core { animation-duration: 1.1s; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes breathe { 0%,100% { opacity: .55; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.04); } }
 
   /* Chat area */
-  .chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { max-width: 80%; padding: 12px 16px; border-radius: 16px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; }
-  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-right-radius: 16px; border-bottom-left-radius: 4px; }
-  .msg.system { align-self: center; background: rgba(59,130,246,0.1); color: var(--accent); font-size: 12px; padding: 6px 16px; border-radius: 20px; }
+  .chat { position: absolute; inset: 0; overflow-y: auto; padding: 18px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 82%; padding: 10px 14px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; background: var(--surface); backdrop-filter: blur(3px); border: 1px solid var(--border); }
+  .msg.user { align-self: flex-end; border-color: var(--accent); border-right-width: 3px; }
+  .msg.assistant { align-self: flex-start; border-left: 3px solid var(--accent-dim); }
+  .msg.system { align-self: center; color: var(--accent); font-size: 12px; padding: 5px 14px; letter-spacing: 1px; }
   .msg .tool-trace { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
   .msg .tool-trace .tool-item { margin: 2px 0; }
   .msg .tool-item.blocked { color: var(--blocked); }
 
   /* Input area */
-  .input-area { padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
-  .input-area input { flex: 1; padding: 10px 16px; border-radius: 24px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; outline: none; }
-  .input-area input:focus { border-color: var(--accent); }
-  .input-area button { padding: 10px 20px; border-radius: 24px; border: none; background: var(--accent); color: white; font-size: 14px; cursor: pointer; }
-  .input-area button:hover { opacity: 0.9; }
-  .input-area button:disabled { opacity: 0.5; cursor: default; }
+  .input-area { grid-column: 2; grid-row: 4; display: flex; gap: 8px; align-items: center; padding-top: 8px; }
+  .input-area input { flex: 1; padding: 11px 16px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px; outline: none; font-family: inherit; }
+  .input-area input:focus { border-color: var(--accent); box-shadow: var(--glow); }
+  .input-area button { padding: 11px 22px; border: 1px solid var(--accent); background: rgba(34,230,255,0.12); color: var(--accent); font-size: 13px; letter-spacing: 2px; cursor: pointer; font-family: inherit; }
+  .input-area button:hover { background: var(--accent); color: #04070b; }
+  .input-area button:disabled { opacity: 0.4; cursor: default; }
 
   /* Approval dialog */
   .approval-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -70,10 +111,10 @@
   .approval-hint { font-size: 12px; color: var(--text-dim); margin-top: 8px; line-height: 1.5; }
 
   /* Progress bar */
-  .progress { display: none; padding: 8px 20px; background: var(--surface); border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); align-items: center; gap: 10px; }
+  .progress { grid-column: 2; grid-row: 3; display: none; padding: 6px 2px 0; font-size: 11px; letter-spacing: 1px; color: var(--accent); align-items: center; gap: 10px; }
   .progress.visible { display: flex; }
-  .progress-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-  .progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
+  .progress-track { flex: 1; height: 3px; background: rgba(34,230,255,0.12); overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--accent); box-shadow: var(--glow); transition: width 0.3s ease; }
 
   /* Settings panel */
   .settings-panel { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 50; overflow-y: auto; padding: 20px; }
@@ -148,24 +189,52 @@
 </head>
 <body>
 
+<div class="hud">
+
 <div class="header">
-  <div style="display:flex;align-items:center;gap:8px">
-    <h1>JARVIS</h1>
+  <div style="display:flex;align-items:center;gap:10px">
+    <h1>J.A.R.V.I.S</h1>
     <span class="orb-indicator listening" id="orbIndicator"></span>
     <span class="status-badge listening" id="statusBadge">Listening</span>
   </div>
   <div class="header-controls">
-    <span class="mode-badge" id="modeBadge" title="Click to toggle mode">SAFE</span>
-    <button class="btn-icon" id="btnSettings" title="Settings">S</button>
+    <span class="mode-badge" id="modeBadge" title="לחץ להחלפת מצב">SAFE</span>
+    <button class="btn-icon" id="btnSettings" title="הגדרות">S</button>
     <button class="btn-icon" id="btnConnectors" title="חיבורים לשירותים">C</button>
-    <button class="btn-icon" id="btnAudit" title="Audit Log">L</button>
-    <button class="btn-icon" id="btnMic" title="Toggle microphone">M</button>
-    <button class="btn-icon btn-stop" id="btnStop" title="STOP JARVIS">STOP</button>
+    <button class="btn-icon" id="btnAudit" title="יומן פעולות">L</button>
+    <button class="btn-icon" id="btnMic" title="מיקרופון">M</button>
+    <button class="btn-icon btn-stop" id="btnStop" title="עצירת חירום (Ctrl+Shift+Esc)">STOP</button>
   </div>
 </div>
 
-<div class="chat" id="chat">
-  <div class="msg system">JARVIS Desktop ready. Say "JARVIS" to start a voice command.</div>
+<aside class="side">
+  <div class="panel date">
+    <div class="mon" id="hudMonth">—</div>
+    <div class="day" id="hudDay">—</div>
+    <div class="wk" id="hudWeekday">—</div>
+    <div class="clk" id="hudClock">--:--</div>
+  </div>
+  <div class="panel">
+    <div class="lbl">Primary storage</div>
+    <div class="gauge">
+      <div class="ring" id="hudDiskRing" style="--v:0"><span id="hudDiskPct">—</span></div>
+      <div class="txt">Full: <b id="hudDiskTotal">—</b><br>Free: <b id="hudDiskFree">—</b></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="lbl">Power</div>
+    <div class="gauge">
+      <div class="ring" id="hudBatRing" style="--v:0"><span id="hudBatPct">—</span></div>
+      <div class="txt" id="hudBatTxt">—</div>
+    </div>
+  </div>
+</aside>
+
+<div class="center">
+  <div class="rings" id="rings"><div class="r1"></div><div class="r2"></div><div class="r3"></div><div class="core"></div></div>
+  <div class="chat" id="chat">
+    <div class="msg system">J.A.R.V.I.S ONLINE</div>
+  </div>
 </div>
 
 <div class="progress" id="progress">
@@ -174,8 +243,30 @@
 </div>
 
 <div class="input-area">
-  <input type="text" id="inputField" placeholder="Type a message or say 'JARVIS'..." autocomplete="off">
-  <button id="btnSend">Send</button>
+  <input type="text" id="inputField" placeholder="תגיד לג'רביס מה לעשות..." autocomplete="off">
+  <button id="btnSend">SEND</button>
+</div>
+
+<aside class="side">
+  <div class="panel">
+    <div class="lbl">Quick access</div>
+    <div class="links" id="hudLinks">
+      <a data-url="https://mail.google.com">Gmail</a>
+      <a data-url="https://calendar.google.com">Calendar</a>
+      <a data-url="https://web.whatsapp.com">WhatsApp</a>
+      <a data-url="https://web.telegram.org">Telegram</a>
+      <a data-url="https://www.youtube.com">YouTube</a>
+      <a data-url="https://github.com">GitHub</a>
+      <a data-url="https://www.wikipedia.org">Wikipedia</a>
+    </div>
+  </div>
+  <div class="panel wx">
+    <div class="lbl">Atmospheric</div>
+    <div class="t" id="hudTemp">—°</div>
+    <div class="d" id="hudWx">…</div>
+  </div>
+</aside>
+
 </div>
 
 <!-- Approval dialog -->
@@ -290,6 +381,14 @@
     <select id="cfgMode">
       <option value="safe">Safe Mode</option>
       <option value="assistant">Assistant Mode</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <label>כמה לחשוב (מהירות)</label>
+    <select id="cfgEffort">
+      <option value="low">מהיר — חושב מעט, עונה קצר</option>
+      <option value="medium">מאוזן (מומלץ)</option>
+      <option value="high">יסודי — איטי יותר</option>
     </select>
   </div>
   <div class="setting-row">
@@ -545,6 +644,7 @@ document.getElementById("btnSettings").addEventListener("click", async () => {
   document.getElementById("cfgUserId").value = cfg.userId || "";
   document.getElementById("cfgModel").value = cfg.model || "";
   document.getElementById("cfgMode").value = cfg.mode || "safe";
+  document.getElementById("cfgEffort").value = cfg.effort || "medium";
   document.getElementById("cfgWakeWord").value = String(cfg.wakeWordEnabled);
   document.getElementById("cfgTts").value = String(cfg.ttsEnabled);
   document.getElementById("cfgLang").value = cfg.sttLang || "he-IL";
@@ -566,6 +666,7 @@ document.getElementById("btnSaveSettings").addEventListener("click", async () =>
     userId: document.getElementById("cfgUserId").value,
     model: document.getElementById("cfgModel").value,
     mode: document.getElementById("cfgMode").value,
+    effort: document.getElementById("cfgEffort").value,
     wakeWordEnabled: document.getElementById("cfgWakeWord").value === "true",
     ttsEnabled: document.getElementById("cfgTts").value === "true",
     sttLang: document.getElementById("cfgLang").value,
@@ -753,6 +854,81 @@ setupGo.addEventListener("click", async () => {
     ? "מוכן. תגיד לי מה לעשות — למשל: תפתח פנקס רשימות ותכתוב שלום."
     : "מוכן במצב צפייה בלבד. לחץ על התג למעלה כדי לאפשר שליטה מלאה.");
 });
+
+// HUD live data
+const rings = document.getElementById("rings");
+const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+const MONTHS = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
+
+function tickClock() {
+  const d = new Date();
+  document.getElementById("hudMonth").textContent = MONTHS[d.getMonth()];
+  document.getElementById("hudDay").textContent = String(d.getDate()).padStart(2, "0");
+  document.getElementById("hudWeekday").textContent = "יום " + HE_DAYS[d.getDay()];
+  document.getElementById("hudClock").textContent =
+    String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function setRing(id, pctId, pct, label) {
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  document.getElementById(id).style.setProperty("--v", p);
+  document.getElementById(pctId).textContent = label !== undefined ? label : p + "%";
+}
+
+async function refreshStats() {
+  try {
+    const s = await window.jarvis.systemStats();
+    if (s.disk) {
+      setRing("hudDiskRing", "hudDiskPct", s.disk.usedPct);
+      document.getElementById("hudDiskTotal").textContent = s.disk.totalGB + " G";
+      document.getElementById("hudDiskFree").textContent = s.disk.freeGB + " G";
+    }
+  } catch {}
+  try {
+    if (navigator.getBattery) {
+      const b = await navigator.getBattery();
+      const paint = () => {
+        setRing("hudBatRing", "hudBatPct", b.level * 100);
+        document.getElementById("hudBatTxt").textContent = b.charging ? "טוען" : (b.level > 0.2 ? "סוללה" : "סוללה חלשה");
+      };
+      paint();
+      b.addEventListener("levelchange", paint);
+      b.addEventListener("chargingchange", paint);
+    } else {
+      setRing("hudBatRing", "hudBatPct", 100, "AC");
+      document.getElementById("hudBatTxt").textContent = "חשמל";
+    }
+  } catch {
+    setRing("hudBatRing", "hudBatPct", 100, "AC");
+    document.getElementById("hudBatTxt").textContent = "חשמל";
+  }
+}
+
+async function refreshWeather() {
+  try {
+    // The weather tool returns a JSON string: { location, now: { temp, desc, ... } }
+    const raw = await window.jarvis.hudWeather("Tel Aviv");
+    const w = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (w && w.now) {
+      document.getElementById("hudTemp").textContent = Math.round(w.now.temp) + "°";
+      document.getElementById("hudWx").textContent = [w.location, w.now.desc].filter(Boolean).join(" · ");
+    } else if (w && w.error) {
+      document.getElementById("hudWx").textContent = "אין נתוני מזג אוויר";
+    }
+  } catch {}
+}
+
+document.getElementById("hudLinks").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-url]");
+  if (a) window.jarvis.openExternal(a.dataset.url);
+});
+
+tickClock();
+setInterval(tickClock, 15000);
+refreshStats();
+setInterval(refreshStats, 60000);
+refreshWeather();
+setInterval(refreshWeather, 15 * 60000);
 
 // Init
 (async () => {

@@ -15,6 +15,10 @@ const DEFAULTS = {
   userId: "effi",
   anthropicApiKey: "",
   model: "claude-opus-5",
+  // How hard JARVIS thinks per turn. "low" is fastest and cheapest; "high" is
+  // the API default and is slower. Medium keeps multi-step computer control
+  // reliable without the long pauses.
+  effort: "medium",
   // Assistant, not safe: safe mode refuses every click and keystroke, so a
   // fresh install would look broken. The ASK/CONFIRM/HIGH_RISK/BLOCKED gates
   // are what keep this safe, not the mode.
