@@ -28,4 +28,9 @@ contextBridge.exposeInMainWorld("jarvis", {
   onShowAudit: (cb) => ipcRenderer.on("show-audit", () => cb()),
 
   getBridgeInfo: () => ipcRenderer.invoke("get-bridge-info"),
+
+  connectorsList: () => ipcRenderer.invoke("connectors-list"),
+  connectorsSave: (c) => ipcRenderer.invoke("connectors-save", c),
+  connectorsRemove: (name) => ipcRenderer.invoke("connectors-remove", name),
+  connectorsDiscover: (c) => ipcRenderer.invoke("connectors-discover", c),
 });

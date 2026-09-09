@@ -2,7 +2,8 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, nativeImage, di
 const path = require("path");
 const config = require("./src/config");
 const { VoiceService } = require("./src/voice");
-const { runAgent, abort, resetAbort, DESKTOP_PERSONA } = require("./src/agent");
+const { runAgent, abort, resetAbort, discoverConnectorTools, DESKTOP_PERSONA } = require("./src/agent");
+const connectors = require("./src/connectors");
 const toolRegistry = require("./src/tools/index");
 const powershell = require("./src/tools/powershell");
 const bridge = require("./src/bridge");
@@ -228,3 +229,24 @@ ipcMain.handle("get-bridge-info", () => ({
   port: cfg.bridgePort,
   token: cfg.bridgeToken,
 }));
+
+// --- Connectors (remote MCP servers) ---
+ipcMain.handle("connectors-list", () => connectors.loadAll());
+
+ipcMain.handle("connectors-save", (_e, connector) => {
+  const saved = connectors.save(connector);
+  log({ action: "connector_saved", tool: "connectors", target: saved.name, result: "SUCCESS" });
+  return connectors.loadAll();
+});
+
+ipcMain.handle("connectors-remove", (_e, name) => {
+  connectors.remove(name);
+  log({ action: "connector_removed", tool: "connectors", target: String(name), result: "SUCCESS" });
+  return connectors.loadAll();
+});
+
+ipcMain.handle("connectors-discover", async (_e, connector) => {
+  const names = await discoverConnectorTools(connector);
+  // Pre-tick only the tools whose names read as read-only. The user confirms.
+  return names.map((name) => ({ name, suggested: connectors.looksReadOnly(name) }));
+});
