@@ -105,32 +105,44 @@ async function toolResultText(cfg, tr) {
   return "";
 }
 
+// Every message is { role, content: <string> } and nothing else.
+//
+// The model's input schema accepts only string or [{type,text}] content, and
+// has no place for tool_calls / tool_call_id, so the native OpenAI tool
+// protocol is rejected outright (a null content on an assistant turn fails
+// too). Tools are therefore described in the system prompt and calls travel as
+// JSON in the message text, which validates on any chat model.
 async function convertMessages(cfg, systemText, messages) {
   const out = [{ role: "system", content: systemText }];
+  const push = (role, content) => {
+    const text = String(content == null ? "" : content);
+    if (!text) return;
+    const prev = out[out.length - 1];
+    // The schema wants alternating turns; merge same-role neighbours.
+    if (prev && prev.role === role) prev.content += "\n" + text;
+    else out.push({ role, content: text });
+  };
+
   for (const m of messages) {
     if (m.role === "user") {
-      if (typeof m.content === "string") { out.push({ role: "user", content: m.content }); continue; }
-      const texts = [];
+      if (typeof m.content === "string") { push("user", m.content); continue; }
       for (const b of m.content || []) {
         if (b.type === "tool_result") {
-          out.push({ role: "tool", tool_call_id: b.tool_use_id, content: await toolResultText(cfg, b) });
+          const body = await toolResultText(cfg, b);
+          push("user", `[TOOL RESULT ${b.tool_use_id || ""}]\n${body}`);
         } else {
-          texts.push(await blockText(cfg, b));
+          push("user", await blockText(cfg, b));
         }
       }
-      const t = texts.filter(Boolean).join("\n");
-      if (t) out.push({ role: "user", content: t });
     } else if (m.role === "assistant") {
-      if (typeof m.content === "string") { out.push({ role: "assistant", content: m.content }); continue; }
-      const text = (m.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-      const calls = (m.content || []).filter((b) => b.type === "tool_use").map((b) => ({
-        id: b.id,
-        type: "function",
-        function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
-      }));
-      const msg = { role: "assistant", content: text || (calls.length ? null : "") };
-      if (calls.length) msg.tool_calls = calls;
-      out.push(msg);
+      if (typeof m.content === "string") { push("assistant", m.content); continue; }
+      const parts = [];
+      for (const b of m.content || []) {
+        if (b.type === "text") parts.push(b.text || "");
+        // Echo the model's own call back as the same JSON it is asked to emit.
+        else if (b.type === "tool_use") parts.push(JSON.stringify({ tool: b.name, input: b.input || {} }));
+      }
+      push("assistant", parts.filter(Boolean).join("\n"));
     }
   }
   return out;
@@ -142,27 +154,73 @@ function convertTools(tools) {
     .map((t) => ({ type: "function", function: { name: t.name, description: t.description || "", parameters: t.input_schema } }));
 }
 
+// Compact manual appended to the system prompt, since tools are not sent as a
+// request parameter.
+function toolManual(tools) {
+  const defs = (tools || []).filter((t) => t && t.name && t.input_schema);
+  if (!defs.length) return "";
+  const lines = defs.map((t) => {
+    const props = t.input_schema.properties || {};
+    const required = new Set(t.input_schema.required || []);
+    const args = Object.keys(props)
+      .map((k) => `${k}${required.has(k) ? "" : "?"}:${props[k].type || "any"}`)
+      .join(", ");
+    return `- ${t.name}(${args}) — ${(t.description || "").split("\n")[0]}`;
+  });
+  return `
+
+<tools>
+You can run tools on the user's computer. These are the only ones that exist:
+${lines.join("\n")}
+
+To run a tool, reply with ONE json object and nothing else, in this exact shape:
+{"tool": "<name>", "input": { ...arguments... }}
+Do not wrap it in a code fence. Do not add any text before or after it.
+You will then get a message starting with [TOOL RESULT] containing the output.
+When you have finished and want to answer the user, reply with normal text and no json.
+Never invent a tool name that is not in the list above.
+</tools>`;
+}
+
 // --- OpenAI -> Anthropic ----------------------------------------------------
 
 let callSeq = 0;
 function nextId() { return `call_${Date.now().toString(36)}_${++callSeq}`; }
 
-// Some open models write the call as text instead of a tool_calls entry.
+// Tool calls arrive as text. Accept the shape we ask for, plus the shapes open
+// models drift into: a ```json fence, an XML-ish <function=> block, or the
+// object buried in a sentence. Only names that actually exist are honoured.
 function parseTextToolCalls(text, knownNames) {
   const calls = [];
   const s = String(text || "").trim();
-  const fn = /<function=([\w-]+)>([\s\S]*?)<\/function>/g;
+
+  const fn = /<function=([\w.-]+)>([\s\S]*?)<\/function>/g;
   let m;
   while ((m = fn.exec(s))) {
     try { calls.push({ name: m[1], input: JSON.parse(m[2] || "{}") }); } catch {}
   }
-  if (!calls.length && /^\{[\s\S]*\}$/.test(s)) {
-    try {
-      const o = JSON.parse(s);
-      const name = o.name || o.function || o.tool;
-      const input = o.parameters || o.arguments || o.input || {};
-      if (name) calls.push({ name, input: typeof input === "string" ? JSON.parse(input) : input });
-    } catch {}
+
+  if (!calls.length) {
+    const candidates = [];
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) candidates.push(fence[1].trim());
+    candidates.push(s);
+    // Longest balanced {...} run anywhere in the text.
+    const first = s.indexOf("{");
+    const last = s.lastIndexOf("}");
+    if (first !== -1 && last > first) candidates.push(s.slice(first, last + 1));
+
+    for (const c of candidates) {
+      let o;
+      try { o = JSON.parse(c); } catch { continue; }
+      if (!o || typeof o !== "object") continue;
+      const name = o.tool || o.name || o.function;
+      if (typeof name !== "string") continue;
+      let input = o.input ?? o.parameters ?? o.arguments ?? {};
+      if (typeof input === "string") { try { input = JSON.parse(input); } catch { input = {}; } }
+      calls.push({ name, input: input && typeof input === "object" ? input : {} });
+      break;
+    }
   }
   return calls.filter((c) => knownNames.has(c.name));
 }
@@ -197,15 +255,14 @@ function convertResponse(data, knownNames) {
 // --- entry point ------------------------------------------------------------
 
 async function chat(cfg, { systemText, messages, tools, maxTokens }) {
-  const oaTools = convertTools(tools);
-  const knownNames = new Set(oaTools.map((t) => t.function.name));
+  const defs = (tools || []).filter((t) => t && t.name && t.input_schema);
+  const knownNames = new Set(defs.map((t) => t.name));
   const data = await post(cfg, "v1/chat/completions", {
     model: cfg.cfModel || DEFAULT_MODEL,
     max_tokens: Math.min(maxTokens || 2048, 4096),
-    messages: await convertMessages(cfg, systemText, messages),
-    ...(oaTools.length ? { tools: oaTools } : {}),
+    messages: await convertMessages(cfg, systemText + toolManual(defs), messages),
   });
   return convertResponse(data, knownNames);
 }
 
-module.exports = { chat, convertMessages, convertTools, convertResponse, parseTextToolCalls, describeImage, DEFAULT_MODEL, DEFAULT_VISION };
+module.exports = { chat, convertMessages, convertTools, toolManual, convertResponse, parseTextToolCalls, describeImage, DEFAULT_MODEL, DEFAULT_VISION };
