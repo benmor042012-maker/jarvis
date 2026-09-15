@@ -17,6 +17,8 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 
 // In-isolate cache of access tokens: { userId: { token, exp } }
+import { hasDB, safeDB } from "./env_guard.js";
+
 const accessCache = new Map();
 
 export function redirectUri(request) {
@@ -25,7 +27,8 @@ export function redirectUri(request) {
 }
 
 export function isConfigured(env) {
-  return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+  // Google needs its own credentials AND D1 to keep the refresh token.
+  return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && hasDB(env));
 }
 
 // Step 1: send the browser to Google's consent screen.
@@ -90,22 +93,28 @@ export async function handleCallback(env, request) {
 
 export async function status(env, userId) {
   if (!isConfigured(env)) return { configured: false, connected: false };
-  const row = await env.DB.prepare(
-    `SELECT email, updated_at FROM google_tokens WHERE user_id = ?`
-  ).bind(userId).first().catch(() => null);
+  const row = await safeDB(
+    env,
+    () => env.DB.prepare(`SELECT email, updated_at FROM google_tokens WHERE user_id = ?`).bind(userId).first(),
+    null,
+    "google status"
+  );
   return { configured: true, connected: !!row, email: row?.email || null, updated_at: row?.updated_at || null };
 }
 
 export async function disconnect(env, userId) {
-  await env.DB.prepare(`DELETE FROM google_tokens WHERE user_id = ?`).bind(userId).run();
+  await safeDB(env, () => env.DB.prepare(`DELETE FROM google_tokens WHERE user_id = ?`).bind(userId).run(), null, "google disconnect");
   accessCache.delete(userId);
 }
 
 async function refreshToken(env, userId) {
   let refresh = env.GOOGLE_REFRESH_TOKEN || null; // optional manual override
-  const row = await env.DB.prepare(
-    `SELECT refresh_token FROM google_tokens WHERE user_id = ?`
-  ).bind(userId).first().catch(() => null);
+  const row = await safeDB(
+    env,
+    () => env.DB.prepare(`SELECT refresh_token FROM google_tokens WHERE user_id = ?`).bind(userId).first(),
+    null,
+    "google refresh"
+  );
   if (row?.refresh_token) refresh = row.refresh_token;
   return refresh;
 }

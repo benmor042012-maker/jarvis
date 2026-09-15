@@ -1,6 +1,9 @@
 // tools/reminders.js
 // Persistent D1-backed reminders. Cron scans and marks fired.
-// FREE — D1 is Cloudflare's free tier.
+// FREE — D1 is Cloudflare's free tier. Without D1 bound, every entry point
+// returns a readable Hebrew message instead of throwing.
+
+import { ERR_NO_DB, hasDB } from "../env_guard.js";
 
 export const reminder_set_def = {
   name: "reminder_set",
@@ -40,6 +43,7 @@ export const reminder_cancel_def = {
 };
 
 export async function reminder_set(env, userId, { text, at_iso, in_seconds }) {
+  if (!hasDB(env)) return ERR_NO_DB;
   let fireAt;
   if (at_iso) {
     const t = new Date(at_iso).getTime();
@@ -61,6 +65,7 @@ export async function reminder_set(env, userId, { text, at_iso, in_seconds }) {
 }
 
 export async function reminder_list(env, userId) {
+  if (!hasDB(env)) return { reminders: [], ...ERR_NO_DB };
   const rows = await env.DB.prepare(
     `SELECT id, text, fire_at, status FROM reminders
      WHERE user_id = ? AND status = 'pending'
@@ -76,6 +81,7 @@ export async function reminder_list(env, userId) {
 }
 
 export async function reminder_cancel(env, userId, { id }) {
+  if (!hasDB(env)) return ERR_NO_DB;
   const r = await env.DB.prepare(
     `UPDATE reminders SET status = 'cancelled' WHERE id = ? AND user_id = ?`
   ).bind(id, userId).run();
@@ -84,6 +90,7 @@ export async function reminder_cancel(env, userId, { id }) {
 
 // Endpoint the frontend polls: which of my reminders fired since I last polled?
 export async function reminder_poll(env, userId) {
+  if (!hasDB(env)) return { fired: [] };
   const rows = await env.DB.prepare(
     `SELECT id, text, fire_at FROM reminders
      WHERE user_id = ? AND status = 'fired' AND delivered_at IS NULL
@@ -102,6 +109,7 @@ export async function reminder_poll(env, userId) {
 
 // Cron worker uses this to mark due reminders as fired.
 export async function tickReminders(env) {
+  if (!hasDB(env)) return { fired: 0 };
   const now = Date.now();
   const due = await env.DB.prepare(
     `SELECT id FROM reminders WHERE status = 'pending' AND fire_at <= ? LIMIT 200`

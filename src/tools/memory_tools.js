@@ -59,7 +59,10 @@ export const memory_forget_def = {
   },
 };
 
+import { ERR_NO_DB, hasDB } from "../env_guard.js";
+
 export async function memory_write(env, userId, args) {
+  if (!hasDB(env)) return ERR_NO_DB;
   const id = await rememberExplicit(env, userId, args.content, {
     subject: args.subject,
     type: args.type,
@@ -69,6 +72,7 @@ export async function memory_write(env, userId, args) {
 }
 
 export async function memory_search(env, userId, { query }) {
+  if (!hasDB(env)) return { memories: [], ...ERR_NO_DB };
   const { core, associative } = await retrieveMemories(env, userId, query || "");
   return {
     core: core.map((m) => ({ id: m.id, type: m.type, content: m.content })),
@@ -77,6 +81,7 @@ export async function memory_search(env, userId, { query }) {
 }
 
 export async function memory_forget(env, userId, { subject, id, all }) {
+  if (!hasDB(env)) return ERR_NO_DB;
   if (all) {
     const n = await forgetAll(env, userId);
     return { forgot: n, mode: "all" };

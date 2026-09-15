@@ -26,6 +26,7 @@ import {
 import { runAgent } from "./agent.js";
 import { checkRateLimit, corsHeaders } from "./security.js";
 import { costReport } from "./cost_guard.js";
+import { hasDB, hasKey, probe, safeDB, MSG_NO_KEY } from "./env_guard.js";
 import { reminder_poll, reminder_set, reminder_list, reminder_cancel, tickReminders } from "./tools/reminders.js";
 import { runTool, TOOLS } from "./tools/index.js";
 import * as google from "./google.js";
@@ -88,6 +89,8 @@ export default {
         return json(costReport(env), 200, cors);
       if (request.method === "GET" && path === "/health")
         return handleHealth(env, cors);
+      if (request.method === "GET" && (path === "/setup" || path === "/diag"))
+        return handleSetupPage(env, request);
       // Desktop API endpoints
       if (request.method === "POST" && path === "/api/memory/store")
         return handleMemoryStore(request, env, cors);
@@ -124,7 +127,12 @@ export default {
       }
       if (request.method === "GET" && path === "/telegram/setup")
         return json(await telegramSetup(env, request), 200, cors);
-      if (request.method === "GET" && path === "/") return textResp(banner(), cors);
+      // Opening the Worker URL in a browser shows the Hebrew status page,
+      // which is far more useful than a plain text banner.
+      if (request.method === "GET" && path === "/") {
+        const wantsHtml = (request.headers.get("accept") || "").includes("text/html");
+        return wantsHtml ? handleSetupPage(env, request) : textResp(banner(), cors);
+      }
       return new Response("Not found", { status: 404, headers: cors });
     } catch (e) {
       console.error("router error", e, e?.stack);
@@ -177,7 +185,18 @@ async function handleChat(request, env, ctx, cors) {
       : Array.isArray(lastUser?.content)
         ? lastUser.content.filter((b) => b.type === "text").map((b) => b.text).join(" ")
         : "";
-  const { core, associative } = await retrieveMemories(env, userId, queryText);
+  // Missing key is the one thing that stops everything. Say so plainly, in
+  // the reply field, so the web page shows it as a message instead of "error".
+  if (!hasKey(env)) {
+    return json({ reply: MSG_NO_KEY, error: MSG_NO_KEY, setup_url: new URL(request.url).origin + "/setup" }, 200, cors);
+  }
+
+  let core = [], associative = [];
+  try {
+    ({ core, associative } = await retrieveMemories(env, userId, queryText));
+  } catch (e) {
+    console.error("memory retrieval skipped", e?.message || e);
+  }
   const memoryBlock = buildMemoryBlock(core, associative);
 
   const persona = typeof body.system === "string" ? body.system : BASE_PERSONA;
@@ -231,16 +250,21 @@ async function handleRetrieve(request, env, cors) {
 async function handleList(request, env, cors) {
   const url = new URL(request.url);
   const userId = url.searchParams.get("userId") || "effi";
-  const rows = await env.DB.prepare(
-    `SELECT id, type, subject, content, salience, created_at
-     FROM memories WHERE user_id = ? AND status = 'active'
-     ORDER BY salience DESC, created_at DESC`
-  ).bind(userId).all();
+  const rows = await safeDB(
+    env,
+    () => env.DB.prepare(
+      `SELECT id, type, subject, content, salience, created_at
+       FROM memories WHERE user_id = ? AND status = 'active'
+       ORDER BY salience DESC, created_at DESC`
+    ).bind(userId).all(),
+    { results: [] },
+    "list memories"
+  );
   return json({ memories: rows.results || [] }, 200, cors);
 }
 
 async function handleDelete(env, id, cors) {
-  await env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(id).run();
+  await safeDB(env, () => env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(id).run(), null, "delete memory");
   try { await env.VECTORIZE.deleteByIds([id]); } catch {}
   return json({ deleted: id }, 200, cors);
 }
@@ -253,15 +277,7 @@ async function handleRemPoll(request, env, cors) {
 }
 
 async function handleHealth(env, cors) {
-  const checks = {
-    anthropic_key: !!env.ANTHROPIC_API_KEY,
-    d1: false,
-    vectorize: false,
-    ai: false,
-  };
-  try { await env.DB.prepare("SELECT 1").first(); checks.d1 = true; } catch {}
-  try { await env.AI.run("@cf/baai/bge-m3", { text: ["ping"] }); checks.ai = true; } catch {}
-  try { await env.VECTORIZE.describe(); checks.vectorize = true; } catch { checks.vectorize = "unknown"; }
+  const checks = await probe(env);
   return json({ ok: true, checks, timestamp: new Date().toISOString() }, 200, cors);
 }
 
@@ -281,7 +297,7 @@ async function handleMemoryDelete(request, env, cors) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad json" }, 400, cors); }
   if (!body.id) return json({ error: "id required" }, 400, cors);
-  await env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(body.id).run();
+  await safeDB(env, () => env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(body.id).run(), null, "api delete memory");
   try { await env.VECTORIZE.deleteByIds([body.id]); } catch {}
   return json({ deleted: body.id }, 200, cors);
 }
@@ -392,4 +408,121 @@ async function handleBriefingRun(request, env, cors) {
   if (!rl.allowed) return json({ error: "rate limit — תדריך ידני עד 3 פעמים בדקה" }, 429, cors);
   const result = await runBriefing(env, userId, { deliver: body.deliver !== false });
   return json(result, result.ok ? 200 : 502, cors);
+}
+
+// --- Hebrew status / setup page -------------------------------------------
+// Open the Worker URL in a browser and this tells you exactly which pieces are
+// live and which command fixes each missing one. No guessing.
+
+async function handleSetupPage(env, request) {
+  const c = await probe(env);
+  const origin = new URL(request.url).origin;
+
+  const row = (ok, name, detail, fix) => `
+    <tr class="${ok === true ? "ok" : ok === false ? "bad" : "warn"}">
+      <td class="mark">${ok === true ? "✔" : ok === false ? "✕" : "!"}</td>
+      <td><b>${name}</b><div class="detail">${detail}</div>${fix ? `<code>${fix}</code>` : ""}</td>
+    </tr>`;
+
+  const tablesOk = Object.values(c.d1_tables).every(Boolean);
+  const missingTables = Object.entries(c.d1_tables).filter(([, v]) => !v).map(([k]) => k);
+
+  const rows = [
+    row(
+      c.anthropic_key,
+      "מפתח Claude (המוח)",
+      c.anthropic_key ? "מוגדר. ג'רביס יכול לחשוב ולענות." : "חסר. בלי זה ג'רביס לא עונה בכלל — זו הסיבה הכי נפוצה ש'כלום לא עובד'.",
+      c.anthropic_key ? "" : "wrangler secret put ANTHROPIC_API_KEY",
+    ),
+    row(
+      c.d1_works,
+      "מסד נתונים D1 (זיכרון ותזכורות)",
+      c.d1_works
+        ? tablesOk
+          ? "מחובר, כל הטבלאות קיימות."
+          : `מחובר, אבל חסרות טבלאות: ${missingTables.join(", ")}`
+        : c.d1_bound
+          ? "מחובר ב-wrangler.toml אבל לא מגיב. בדוק שה-database_id נכון."
+          : "לא מחובר. ג'רביס יענה, אבל בלי זיכרון, תזכורות, יומן ותדריך בוקר.",
+      c.d1_works && tablesOk ? "" : "npm run setup",
+    ),
+    row(
+      c.ai,
+      "Workers AI (חיפוש סמנטי בזיכרון)",
+      c.ai ? "מחובר." : "לא מחובר. הזיכרון עדיין עובד, רק בלי חיפוש לפי משמעות.",
+      c.ai ? "" : "הוסף binding [ai] ב-wrangler.toml ואז wrangler deploy",
+    ),
+    row(
+      c.vectorize === true ? true : c.vectorize ? null : false,
+      "Vectorize (אינדקס זיכרון)",
+      c.vectorize === true ? "מחובר." : c.vectorize ? String(c.vectorize) : "לא מחובר. אופציונלי.",
+      c.vectorize === true ? "" : "wrangler vectorize create jarvis-memories --dimensions=1024 --metric=cosine",
+    ),
+    row(
+      c.google_configured,
+      "Gmail ויומן Google",
+      c.google_configured
+        ? `מוגדר. לחיבור חשבון: <a href="${origin}/google/auth?userId=effi">${origin}/google/auth</a>`
+        : "לא מוגדר. אופציונלי — נדרש ליומן, למיילים ולתדריך הבוקר.",
+      c.google_configured ? "" : "ראה SETUP-GOOGLE.md, ואז wrangler secret put GOOGLE_CLIENT_ID",
+    ),
+    row(
+      c.telegram_configured ? (c.telegram_locked ? true : null) : false,
+      "בוט טלגרם",
+      c.telegram_configured
+        ? c.telegram_locked
+          ? `מחובר ונעול אליך. רישום: <a href="${origin}/telegram/setup">${origin}/telegram/setup</a>`
+          : "מחובר, אבל פתוח לכולם. הוסף OWNER_ID כדי לנעול אותו אליך."
+        : "לא מוגדר. אופציונלי — לשיחה ולתדריך בוקר בטלגרם.",
+      c.telegram_configured && c.telegram_locked ? "" : "wrangler secret put TELEGRAM_BOT_TOKEN",
+    ),
+  ].join("");
+
+  const working = c.anthropic_key;
+  const headline = working
+    ? c.d1_works
+      ? "ג'רביס פעיל ומלא"
+      : "ג'רביס עונה, אבל בלי זיכרון"
+    : "ג'רביס לא יכול לענות";
+
+  const html = `<!doctype html><html lang="he" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>JARVIS — מצב המערכת</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;overflow-x:hidden;padding:calc(24px + env(safe-area-inset-top,0px)) 16px calc(24px + env(safe-area-inset-bottom,0px));
+ font-family:system-ui,-apple-system,"Segoe UI",Rubik,sans-serif;line-height:1.6;color:#e8f0ff;
+ background:radial-gradient(60% 50% at 50% 0%,rgba(55,125,255,.18),transparent 70%) ,#030b18}
+.wrap{max-width:720px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:.04em}
+.sub{color:#9fb3d9;margin:0 0 24px;font-size:14px}
+.badge{display:inline-block;padding:6px 14px;border-radius:999px;font-weight:600;font-size:14px;margin-bottom:18px}
+.badge.good{background:rgba(56,224,168,.15);color:#38e0a8;border:1px solid rgba(56,224,168,.4)}
+.badge.part{background:rgba(255,200,87,.14);color:#ffc857;border:1px solid rgba(255,200,87,.4)}
+.badge.bad{background:rgba(255,92,122,.14);color:#ff5c7a;border:1px solid rgba(255,92,122,.45)}
+table{width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid rgba(138,168,255,.18);border-radius:14px;overflow:hidden}
+td{word-break:break-word;overflow-wrap:anywhere}
+td{padding:14px 12px;border-bottom:1px solid rgba(138,168,255,.12);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.mark{width:34px;text-align:center;font-size:18px;font-weight:700}
+tr.ok .mark{color:#38e0a8}tr.bad .mark{color:#ff5c7a}tr.warn .mark{color:#ffc857}
+.detail{color:#9fb3d9;font-size:14px;margin-top:2px}
+code{display:block;max-width:100%;margin-top:8px;padding:8px 10px;border-radius:8px;background:#071a33;
+ color:#16d9ff;font-size:13px;direction:ltr;text-align:left;overflow-x:auto;white-space:pre;
+ -webkit-overflow-scrolling:touch}
+a{color:#16d9ff}
+.foot{margin-top:22px;color:#5f7399;font-size:13px}
+</style></head><body><div class="wrap">
+<h1>J.A.R.V.I.S — מצב המערכת</h1>
+<p class="sub">הדף הזה בודק את ה-Worker עצמו, עכשיו. מה שמסומן ב-✕ הוא מה שצריך לתקן.</p>
+<div class="badge ${working ? (c.d1_works ? "good" : "part") : "bad"}">${headline}</div>
+<table>${rows}</table>
+<p class="foot">נבדק ב-${new Date().toISOString()} · גרסת JSON: <a href="${origin}/health">/health</a> · דוח עלויות: <a href="${origin}/cost-report">/cost-report</a></p>
+</div></body></html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
 }

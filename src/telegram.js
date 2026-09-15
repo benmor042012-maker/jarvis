@@ -9,6 +9,7 @@
 import { runAgent } from "./agent.js";
 import { retrieveMemories, buildMemoryBlock, extractAndStore } from "./memory.js";
 import { runBriefing } from "./briefing.js";
+import { hasDB } from "./env_guard.js";
 
 const HISTORY_TURNS = 12;
 
@@ -99,6 +100,7 @@ export async function handleUpdate(env, ctx, persona, request) {
 }
 
 async function loadHistory(env, chatId) {
+  if (!hasDB(env)) return [];
   try {
     const rows = await env.DB.prepare(
       `SELECT role, content FROM telegram_history WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`
@@ -108,6 +110,7 @@ async function loadHistory(env, chatId) {
 }
 
 async function saveHistory(env, chatId, userText, reply) {
+  if (!hasDB(env)) return;
   const now = Date.now();
   try {
     await env.DB.batch([

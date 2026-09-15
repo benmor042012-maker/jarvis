@@ -1,10 +1,72 @@
-# JARVIS — local AI desktop assistant
+# JARVIS
+
+<p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS dashboard: a dark navy screen with a glowing cyan orb, status READY, an activity panel and a command bar" width="820"></p>
+
+<div dir="rtl">
+
+## התחלה מהירה
+
+לג'רביס שלושה חלקים. כל אחד עצמאי, ואפשר להפעיל רק את מה שרוצים.
+
+### 1. המוח בענן — כדי שג'רביס יענה בכלל
+
+```
+npm run setup
+```
+
+פקודה אחת שעושה הכל: מתחברת ל-Cloudflare, יוצרת את מסד הנתונים ואת אינדקס הזיכרון,
+מבקשת את מפתח Claude, ומעלה את השרת. אפשר להריץ אותה שוב בבטחה.
+
+בסיום היא נותנת כתובת. **פתח אותה בדפדפן** ותראה דף בעברית שאומר בדיוק מה פעיל ומה חסר:
+
+```
+https://<הכתובת-שלך>.workers.dev/setup
+```
+
+זה הדף שפותרים איתו כל תקלה. אם ג'רביס לא עונה — הוא יגיד למה.
+
+### 2. הדף לדיבור — שיחה בקול בעברית
+
+<https://benmor042012-maker.github.io/jarvis/>
+
+עובד מכל דפדפן, גם בנייד. מדבר, זוכר, מזכיר, מחפש באינטרנט.
+
+### 3. שליטה במחשב
+
+| מה | איך מפעילים |
+|---|---|
+| **אפליקציית שליטה במחשב** (מסך, עכבר, מקלדת, ווטסאפ) | `desktop\INSTALL-JARVIS.bat` |
+| **אפליקציית הפעולות הבטוחות** (הממשק שבתמונה למעלה) | `START-JARVIS-APP.bat` או `npm run app` |
+
+שתיהן מתקינות לבד את מה שחסר בהרצה הראשונה.
+
+### תוספות אופציונליות
+
+- **יומן Google ו-Gmail** + תדריך בוקר אוטומטי ב-6:00 — ראה [SETUP-GOOGLE.md](SETUP-GOOGLE.md)
+- **בוט טלגרם** — `npx wrangler secret put TELEGRAM_BOT_TOKEN` ואז פתח `<הכתובת>/telegram/setup`
+
+## פתרון תקלות
+
+| מה קורה | מה לעשות |
+|---|---|
+| ג'רביס לא עונה כלום | פתח `<הכתובת>/setup`. מה שמסומן ב-✕ הוא הבעיה. |
+| "חסר ANTHROPIC_API_KEY" | `npx wrangler secret put ANTHROPIC_API_KEY` |
+| עונה, אבל לא זוכר ולא מזכיר | מסד הנתונים לא מחובר. הרץ `npm run setup` שוב. |
+| "לא הצלחתי להגיע לשרת" | השרת לא הועלה. הרץ `npm run setup`. |
+| האפליקציה המקומית נסגרת מיד | הרץ מ-cmd ותראה את השגיאה. בדרך כלל חסר Node.js או Python. |
+| "address already in use" | ג'רביס כבר רץ. פתח <http://localhost:8000>, או `set PORT=8010 && npm run app` |
+
+ג'רביס אף פעם לא מוחק קבצים, לא מריץ פקודות חופשיות, לא נוגע בסיסמאות ולא קונה כלום. זה חסום בקוד.
+
+</div>
+
+---
+
+## The local safe-action app
 
 A cinematic, Iron-Man-style assistant that runs entirely on your machine: a React + TypeScript
 front end with an animated HUD orb, and a small FastAPI back end that plans **safe, allowlisted
 actions** and executes them only after the permission policy (and you) say so.
-
-<p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS dashboard: a dark navy screen with a glowing cyan orb, status READY, an activity panel and a command bar" width="820"></p>
 
 - Works out of the box in **mock mode** (no key, no network): a rule-based planner understands
   "open youtube", "launch notepad", "search for report", "read file notes.txt",
@@ -22,7 +84,11 @@ actions** and executes them only after the permission policy (and you) say so.
 
 ---
 
-## Quick start
+### Quick start
+
+One command, from a clean checkout: `npm run app` (or double-click `START-JARVIS-APP.bat` on
+Windows). It creates the Python environment, installs both halves, builds the UI and serves
+everything at <http://localhost:8000>. The rest of this section is the manual equivalent.
 
 Requirements: **Python 3.10+** and **Node 18+**.
 
