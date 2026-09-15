@@ -1,276 +1,152 @@
 # JARVIS
 
-<p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS dashboard: a dark navy screen with a glowing cyan orb, status READY, an activity panel and a command bar" width="820"></p>
+<p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS: a dark navy screen with a glowing cyan orb, status READY, a session log and a command bar" width="860"></p>
+
+A **self-contained** local AI assistant that really controls your Windows computer.
+No cloud, no account, no API key, no subscription, no payment — anywhere, ever.
+
+Public page: <https://benmor042012-maker.github.io/jarvis/> (explains and links the download; a web page can never control a computer — the installed agent does).
 
 <div dir="rtl">
 
 ## התחלה מהירה
 
-לג'רביס שלושה חלקים. כל אחד עצמאי, ואפשר להפעיל רק את מה שרוצים.
-
-### 1. המוח בענן — כדי שג'רביס יענה בכלל
-
 ```
-npm run setup
-```
-
-פקודה אחת שעושה הכל: מתחברת ל-Cloudflare, יוצרת את מסד הנתונים ואת אינדקס הזיכרון,
-מבקשת את מפתח Claude, ומעלה את השרת. אפשר להריץ אותה שוב בבטחה.
-
-בסיום היא נותנת כתובת. **פתח אותה בדפדפן** ותראה דף בעברית שאומר בדיוק מה פעיל ומה חסר:
-
-```
-https://<הכתובת-שלך>.workers.dev/setup
+git clone https://github.com/benmor042012-maker/jarvis.git
+cd jarvis
+npm run setup     # מתקין, בונה ומריץ את כל הבדיקות
+npm start         # פותח את ג'רביס
 ```
 
-זה הדף שפותרים איתו כל תקלה. אם ג'רביס לא עונה — הוא יגיד למה.
+ב-Windows אפשר פשוט ללחוץ פעמיים על **`INSTALL-JARVIS.bat`**.
 
-### 2. הדף לדיבור — שיחה בקול בעברית
+דרוש Node.js 18+. בינה מלאכותית מקומית היא אופציונלית: אם יש Ollama או LocalAI — ג'רביס משתמש בהם;
+אם אין — הוא אומר **MOCK MODE** במפורש ועובר למתכנן כללים דטרמיניסטי, בלי להעמיד פנים.
 
-<https://benmor042012-maker.github.io/jarvis/>
-
-עובד מכל דפדפן, גם בנייד. מדבר, זוכר, מזכיר, מחפש באינטרנט.
-
-### 3. שליטה במחשב
-
-| מה | איך מפעילים |
+| מצב | מה מותר |
 |---|---|
-| **אפליקציית שליטה במחשב** (מסך, עכבר, מקלדת, ווטסאפ) | `desktop\INSTALL-JARVIS.bat` |
-| **אפליקציית הפעולות הבטוחות** (הממשק שבתמונה למעלה) | `START-JARVIS-APP.bat` או `npm run app` |
+| **Safe** | קריאה בלבד, פעולות הפיכות |
+| **Assistant** | ברירת מחדל; בינוני וגבוה מבקשים אישור |
+| **Advanced** | מדיניות משלך לכל כלי; סיכון גבוה עדיין שואל תמיד |
+| **Emergency stopped** | שום דבר לא רץ |
 
-שתיהן מתקינות לבד את מה שחסר בהרצה הראשונה.
-
-### תוספות אופציונליות
-
-- **יומן Google ו-Gmail** + תדריך בוקר אוטומטי ב-6:00 — ראה [SETUP-GOOGLE.md](SETUP-GOOGLE.md)
-- **בוט טלגרם** — `npx wrangler secret put TELEGRAM_BOT_TOKEN` ואז פתח `<הכתובת>/telegram/setup`
-
-## פתרון תקלות
-
-| מה קורה | מה לעשות |
-|---|---|
-| ג'רביס לא עונה כלום | פתח `<הכתובת>/setup`. מה שמסומן ב-✕ הוא הבעיה. |
-| "חסר ANTHROPIC_API_KEY" | `npx wrangler secret put ANTHROPIC_API_KEY` |
-| עונה, אבל לא זוכר ולא מזכיר | מסד הנתונים לא מחובר. הרץ `npm run setup` שוב. |
-| "לא הצלחתי להגיע לשרת" | השרת לא הועלה. הרץ `npm run setup`. |
-| האפליקציה המקומית נסגרת מיד | הרץ מ-cmd ותראה את השגיאה. בדרך כלל חסר Node.js או Python. |
-| "address already in use" | ג'רביס כבר רץ. פתח <http://localhost:8000>, או `set PORT=8010 && npm run app` |
-
-ג'רביס אף פעם לא מוחק קבצים, לא מריץ פקודות חופשיות, לא נוגע בסיסמאות ולא קונה כלום. זה חסום בקוד.
+עצירת חירום: <kbd>Ctrl+Shift+Esc</kbd> מכל מקום, או כפתור **STOP**.
 
 </div>
 
 ---
 
-## The local safe-action app
+## What it is
 
-A cinematic, Iron-Man-style assistant that runs entirely on your machine: a React + TypeScript
-front end with an animated HUD orb, and a small FastAPI back end that plans **safe, allowlisted
-actions** and executes them only after the permission policy (and you) say so.
+Three pieces, all on your machine:
 
-- Works out of the box in **mock mode** (no key, no network): a rule-based planner understands
-  "open youtube", "launch notepad", "search for report", "read file notes.txt",
-  "create file todo.txt with buy milk".
-- Add an **OpenAI-compatible** API key (OpenAI, Ollama, LM Studio, OpenRouter, …) and the same
-  UI is driven by a real model. The key lives only in the server process / your `.env`.
-- Every action is validated against a strict schema, an action-type allowlist, a URL host
-  allowlist, a fixed app allowlist and workspace path containment. Confirmation for medium/high
-  risk is enforced **on the server**, not just in the UI.
-- No shell execution, no deletes, no credential access, no messaging, no unrestricted computer
-  control. That is by design.
+| Piece | What it does |
+| --- | --- |
+| **Agent core** (`desktop/src/core`) | Tool registry, permission policy, signed command protocol, device pairing, executor, audit log, local HTTP server. Pure Node, no dependencies. |
+| **Desktop shell** (`desktop/main.js`) | Electron: tray, hide-to-tray, Windows auto-start, global emergency-stop hotkey, the native second confirmation for high-risk actions, and the built-in browser used for form automation. |
+| **Interface** (`client/`) | The React UI with the J.A.R.V.I.S orb. Served by the agent at `http://127.0.0.1:8765` — the same page your phone opens over Wi-Fi after pairing. |
 
-> This directory also contains the earlier JARVIS projects (`index.html` + Cloudflare Worker in
-> `src/`, and the Electron agent in `desktop/`). They are independent of the app described here.
+The GitHub Pages site is documentation only. Browsers block page access to files, mouse and
+keyboard; that is a browser security guarantee and nothing can work around it.
 
----
+## What it can do
 
-### Quick start
+**Computer control** (typed tools, each with a schema, risk level, timeout, cancellation,
+permission rule and audit redaction policy):
 
-One command, from a clean checkout: `npm run app` (or double-click `START-JARVIS-APP.bat` on
-Windows). It creates the Python environment, installs both halves, builds the UI and serves
-everything at <http://localhost:8000>. The rest of this section is the manual equivalent.
+| Category | Tools | Risk |
+| --- | --- | --- |
+| Apps | `open_app`, `open_url`, `open_file` / `close_app` | low / medium |
+| Files | `list_files`, `read_file`, `create_folder`, `search_files`, `list_trash` / `write_file`, `move_file` / `overwrite_file`, `delete_file` | low / medium / high |
+| Screen | `screen_info`, `list_windows`, `focus_window`, `minimize_window`, `maximize_window` / `screenshot`, `close_window` | low / medium |
+| Input | `mouse_move`, `mouse_scroll` / `mouse_click`, `mouse_drag`, `key_combo`, `keyboard_type` | low / medium |
+| Clipboard | `clipboard_write` / `clipboard_read` | low / medium |
+| Shell | `run_command`, `run_powershell` | high |
+| Browser | `browser_fill_form` (preview, never submits) / `browser_submit_form` | medium / high |
+| Drafts | `create_email_draft` (.eml), `create_calendar_draft` (.ics) — never sent | low |
+| Info & memory | `current_time`, `calculate`, `remember`, `recall`, `forget`, `set_reminder`, `list_reminders`, `cancel_reminder` | low / medium |
 
-Requirements: **Python 3.10+** and **Node 18+**.
+**Project builder** — websites, APIs, desktop apps, PWAs and installer configs from deterministic
+templates plus the local model, in isolated folders under `~/.jarvis/projects`, with git
+checkpoints, real test/build runs, secret scanning and dependency/license checks. It never
+publishes or uploads: that stays yours to do.
 
-```bash
-# 1. clone
-git clone https://github.com/benmor042012-maker/jarvis.git
-cd jarvis
+**Customer drafts** — Hebrew and English templates, tone changes, optional local-model rewriting
+and translation, opt-out list, duplicate prevention and rate-limit simulation.
+Labelled **DRAFT ONLY — NOTHING IS SENT**, because there is no sending code in the product at all.
 
-# 2. back end
-python -m venv .venv
-. .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
+## Security model
 
-# 3. front end
-cd client && npm install && cd ..
-
-# 4. configure (optional — leave the key empty for mock mode)
-cp .env.example .env
-
-# 5. run, two terminals
-uvicorn server.main:app --reload --port 8000          # terminal A
-cd client && npm run dev                              # terminal B  → http://localhost:5173
-```
-
-Open <http://localhost:5173>. The header shows **Mock mode** until a key is set.
-
-### Loading the `.env`
-
-The server reads plain environment variables. Either export them, or load the file:
-
-```bash
-set -a; . ./.env; set +a; uvicorn server.main:app --port 8000      # bash/zsh
-```
-
-On Windows PowerShell: `Get-Content .env | ForEach-Object { if ($_ -match '^(\w+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2]) } }` then start uvicorn.
-
-You can also paste the key in **Settings** inside the app. It is sent once over localhost, kept in
-server memory, never written to disk by the app and never sent back to the browser (only a
-masked hint like `••••ab12`).
-
----
-
-## Using it
-
-| Say / type                                   | Action              | Risk   | Default behaviour (`ask` mode) |
-| -------------------------------------------- | ------------------- | ------ | ------------------------------ |
-| `open youtube`, `go to github.com`           | `open_url`          | low    | runs                           |
-| `search for invoice`                         | `search_files`      | low    | runs                           |
-| `read file notes.txt`                        | `read_text_file`    | low    | runs                           |
-| `launch notepad` / `open calculator`         | `open_app`          | medium | confirmation dialog            |
-| `create file todo.txt with buy milk`         | `create_text_file`  | medium | confirmation dialog            |
-| `delete …`, `send email …`, `run …`          | refused             |        | nothing runs                   |
-
-Keyboard: `/` focuses the command bar, `Enter` runs, `Esc` stops a running task or closes a dialog.
-The microphone button (Chrome/Edge) asks for permission first and only listens while pressed.
-
-**Permission modes** (Settings → Automation permission mode):
-
-- `manual` — confirm every action.
-- `ask` — run low risk, confirm medium and high. *(default)*
-- `auto` — run low and medium, confirm high.
-
-Allowed sites and apps are listed in Settings. Change them with `JARVIS_ALLOWED_URL_HOSTS` in
-`.env`; apps are a fixed table in `server/permissions.py` (argv only, never a shell).
-
----
-
-## Configuration
-
-See [`.env.example`](.env.example). Non-secret settings changed in the UI persist to
-`server/data/settings.json` (git-ignored). The API key never does.
-
-| Variable                   | Meaning                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `JARVIS_API_KEY`           | Provider key. Empty → mock mode. (`OPENAI_API_KEY` also read.) |
-| `JARVIS_BASE_URL`          | OpenAI-compatible base, e.g. `http://localhost:11434/v1`   |
-| `JARVIS_MODEL`             | Model name                                                 |
-| `JARVIS_WORKSPACE_DIR`     | The only folder file actions may touch                     |
-| `JARVIS_PERMISSION_MODE`   | `manual` / `ask` / `auto`                                  |
-| `JARVIS_ALLOWED_URL_HOSTS` | Comma-separated hosts for `open_url`                       |
-| `JARVIS_MOCK`              | `true` forces mock mode even with a key                    |
-
----
-
-## API
-
-All endpoints are local (`/api/*`); interactive docs at <http://localhost:8000/api/docs>.
-
-| Method | Path                     | Purpose                                          |
-| ------ | ------------------------ | ------------------------------------------------ |
-| POST   | `/api/command`           | `{command}` → validated plan (see schema below)  |
-| POST   | `/api/execute`           | `{actions, confirmed}` → job (202)               |
-| GET    | `/api/jobs/{id}`         | poll job status / results                        |
-| POST   | `/api/jobs/{id}/cancel`  | stop after the current action                    |
-| GET/PUT| `/api/settings`          | read (masked) / update settings                  |
-| POST   | `/api/settings/test`     | Connected / Missing key / Invalid key / Error    |
-| GET    | `/api/health`            | liveness + mock flag                             |
-
-Plan schema returned by `/api/command` (and the only thing a model may produce):
+Every command from any device carries a signed envelope:
 
 ```json
-{
-  "message": "string",
-  "requires_confirmation": true,
-  "actions": [
-    { "type": "open_url | open_app | search_files | read_text_file | create_text_file",
-      "payload": {}, "risk": "low | medium | high" }
-  ]
-}
+{ "v": 1, "id": "<uuid>", "device_id": "…", "ts": 0, "expires": 0, "nonce": "…",
+  "params": {}, "params_hash": "<sha256>", "signature": "<hmac-sha256>", "session": "…" }
 ```
 
-Errors are JSON: `403 {"error":"blocked"}` (allowlist), `409 {"error":"confirmation_required"}`,
-`502 {"error":"provider_error"}` with a human-readable, secret-free `detail`.
+The agent rejects anything **malformed, expired, replayed, duplicated, unauthorized or modified**.
+Then every command follows the same path: receive → build a readable plan → show every action,
+target, parameter, risk and reversibility → ask for approval when required → bind that approval to
+the exact plan hash → execute with a timeout and a cancel signal → write a redacted audit event →
+return `completed`, `partial`, `failed`, `cancelled`, `denied`, `expired` or `offline`.
 
----
+- High-risk actions approved from a phone also need a **second confirmation on the computer**.
+- The server binds to `127.0.0.1` unless you enable LAN access; there is no relay and no tunnel.
+- Public `Host` headers are refused (DNS-rebinding defence), and only the UI's own origin gets CORS.
+- Shell tools take an argv array, never a shell string; PowerShell receives user values through
+  environment variables, so nothing is ever concatenated into a script.
+- Cancellation and the emergency stop kill the **whole child-process tree**.
+- Passwords, cookies, private keys and secret-looking files are blocked by path policy.
+- The audit log never stores clipboard contents, typed text, file contents or screenshots — only
+  sizes, paths and outcomes.
 
-## Project layout
+## Phone access
 
-```
-client/                 React + TypeScript + Vite
-  src/components/       JarvisOrb, CommandBar, ActivityLog, PermissionDialog, SettingsPanel, Header
-  src/state/            jarvisStore.ts (zustand)
-  src/styles/theme.css  design tokens, orb animation, reduced-motion, responsive layout
-server/                 FastAPI
-  main.py               routes, error handlers, static serving of client/dist
-  schemas.py            Pydantic models (discriminated action union, strict)
-  permissions.py        risk policy, URL/app allowlists, workspace path containment
-  model_provider.py     ModelProvider protocol, MockProvider, OpenAICompatibleProvider
-  action_planner.py     provider → validated, policy-checked plan
-  action_executor.py    per-action handlers, server-side confirmation, cancellable jobs
-  logging_utils.py      JSON logs with secret redaction
-tests/                  pytest: schemas, permissions, path security, planner, executor, API
-workspace/              default sandbox folder for file actions
-```
-
----
+Enable LAN access in Settings, then **Devices → Pair a new device**: the computer shows an 8-digit
+single-use code (and a QR) that expires in 5 minutes. From the phone you can see status, send
+commands, approve plans, read the redacted log and revoke the device. When the computer is off,
+asleep, disconnected or the agent is stopped, the phone says exactly that — it never shows a fake
+connected state.
 
 ## Commands
 
 ```bash
-# install
-python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-cd client && npm install && cd ..
-
-# configure
-cp .env.example .env          # edit as needed
-
-# run (dev)
-uvicorn server.main:app --reload --port 8000
-cd client && npm run dev
-
-# test / lint / typecheck
-python -m pytest -q
-ruff check server tests
-cd client && npm run lint && npm run typecheck
-
-# production build (server then serves the built UI at http://localhost:8000)
-cd client && npm run build && cd ..
-uvicorn server.main:app --port 8000
+npm run setup           # install + build + test
+npm start               # desktop agent (or headless if Electron is missing)
+npm run headless        # agent without a window (Linux/servers/CI)
+npm test                # agent test suite
+npm run verify          # tests + lint + typecheck + build + self-contained scan
+npm run build:installer # Windows installer into desktop/dist
 ```
 
----
+## Where your data lives
 
-## Security model, in one paragraph
+```
+~/.jarvis/
+  config.json     settings
+  devices.json    paired devices (secrets encrypted by the OS when available)
+  workspace/      the folder file tools may touch by default
+  projects/       project builder workspaces
+  drafts/         customer drafts, .eml and .ics files
+  logs/           redacted audit log, one file per day
+  trash/          what "delete" actually does
+  temp/           screenshots
+```
 
-The browser never holds a secret and never talks to a model provider; it only talks to the local
-server. The server holds the key in memory (or reads it from the environment), redacts anything
-key-shaped from logs and error messages, and rejects any model output that is not exactly the
-plan schema. Risk is assigned by server policy (a model can raise it, never lower it). Actions
-outside the allowlist, URLs outside the allowed hosts, apps outside the fixed table and paths that
-resolve outside the workspace (including symlink escapes and secret-looking names such as
-`.env` or `*.pem`) are refused with a 403. Medium/high-risk actions without `confirmed: true`
-are refused with a 409 even if a client tries to skip the dialog. Files are never overwritten or
-deleted.
+Export or delete all of it from **Activity log → Export my data / Delete local data**.
 
-## Limitations
+## Limits, stated honestly
 
-- `open_app` launches a fixed set of apps by platform-specific argv; on Linux it assumes
-  `gedit`, `gnome-calculator`, `xdg-open`, `x-terminal-emulator`, `code` exist.
-- Speech input relies on the browser's Web Speech API (Chrome/Edge). Firefox has no support, so
-  the mic button is hidden there.
-- The connection test calls `GET {base_url}/models`; a few gateways do not implement it and will
-  report *Error* even when chat works.
-- Jobs and the pasted API key live in server memory and are gone after a restart; use `.env` to
-  persist the key.
+- Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
+  themselves unavailable with the reason; the rest of JARVIS keeps working.
+- Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- Headless mode cannot show the native second confirmation, so high-risk plans approved remotely
+  are refused there rather than run unconfirmed.
+- Local models are smaller than hosted assistants: they can misunderstand and are slower. Every plan
+  is validated against the tool schemas and shown to you before anything runs, and you can always
+  fall back to the deterministic rule planner.
+- A computer that is off, asleep without wake support, or disconnected cannot be controlled.
+
+## License
+
+MIT.

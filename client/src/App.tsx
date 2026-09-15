@@ -1,32 +1,50 @@
 import { useEffect } from "react";
 
 import { ActivityLog } from "./components/ActivityLog";
+import { ApprovalDialog } from "./components/ApprovalDialog";
 import { CommandBar } from "./components/CommandBar";
 import { Header } from "./components/Header";
 import { JarvisOrb } from "./components/JarvisOrb";
-import { PermissionDialog } from "./components/PermissionDialog";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { PairingScreen } from "./components/PairingScreen";
+import { AuditPanel } from "./panels/AuditPanel";
+import { DevicesPanel } from "./panels/DevicesPanel";
+import { DraftsPanel } from "./panels/DraftsPanel";
+import { ProjectsPanel } from "./panels/ProjectsPanel";
+import { SettingsPanel } from "./panels/SettingsPanel";
+import { StatusPanel } from "./panels/StatusPanel";
+import { ToolsPanel } from "./panels/ToolsPanel";
 import { useJarvis } from "./state/jarvisStore";
 
 export default function App() {
+  const bootstrap = useJarvis((s) => s.bootstrap);
+  const connection = useJarvis((s) => s.connection);
   const orb = useJarvis((s) => s.orb);
   const statusText = useJarvis((s) => s.statusText);
-  const bootstrap = useJarvis((s) => s.bootstrap);
-  const online = useJarvis((s) => s.serverOnline);
-  const pending = useJarvis((s) => s.pendingPlan);
+  const status = useJarvis((s) => s.status);
+  const panel = useJarvis((s) => s.panel);
   const log = useJarvis((s) => s.log);
+  const pending = useJarvis((s) => s.pendingPlans);
+  const approvalOpen = useJarvis((s) => s.approvalOpen);
+  const openApproval = useJarvis((s) => s.openApproval);
+  const reconnectIn = useJarvis((s) => s.reconnectIn);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
-  const lastAssistant = [...log].reverse().find((e) => e.kind === "assistant" || e.kind === "error");
+  if (connection === "unpaired" || connection === "unauthorized") return <PairingScreen />;
+
+  const lastMessage = [...log].reverse().find((e) => e.kind === "assistant" || e.kind === "error" || e.kind === "warn");
   const subtext =
-    online === false
-      ? "Local server offline. Start it with: uvicorn server.main:app --port 8000"
-      : pending
-        ? "Review the proposed actions before anything runs."
-        : lastAssistant?.text;
+    connection === "offline"
+      ? `The JARVIS agent is not reachable. It cannot control the computer while it is off, asleep, disconnected or stopped.${reconnectIn !== null ? ` Retrying in ${String(reconnectIn)}s.` : ""}`
+      : connection === "connecting"
+        ? "Contacting the agent on this computer…"
+        : status?.emergency
+          ? `Emergency stop is active (${status.emergency_source ?? "unknown source"}). Nothing will run until it is cleared on the computer.`
+          : pending.length
+            ? `${String(pending.length)} plan(s) waiting for your approval.`
+            : lastMessage?.text;
 
   return (
     <div className="app">
@@ -34,11 +52,22 @@ export default function App() {
       <Header />
       <main className="stage" aria-label="Assistant">
         <JarvisOrb state={orb} statusText={statusText} {...(subtext ? { subtext } : {})} />
+        {pending.length > 0 && !approvalOpen && (
+          <button type="button" className="btn btn-primary" onClick={() => { openApproval(pending[0]?.plan_id ?? null); }}>
+            Review {pending.length} pending approval{pending.length === 1 ? "" : "s"}
+          </button>
+        )}
       </main>
       <ActivityLog />
       <CommandBar />
-      <PermissionDialog />
-      <SettingsPanel />
+      <ApprovalDialog />
+      {panel === "status" && <StatusPanel />}
+      {panel === "devices" && <DevicesPanel />}
+      {panel === "tools" && <ToolsPanel />}
+      {panel === "audit" && <AuditPanel />}
+      {panel === "projects" && <ProjectsPanel />}
+      {panel === "drafts" && <DraftsPanel />}
+      {panel === "settings" && <SettingsPanel />}
     </div>
   );
 }

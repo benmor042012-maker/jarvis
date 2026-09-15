@@ -1,0 +1,52 @@
+// The Electron shell cannot be launched in CI, so these checks assert the
+// contract main.js relies on: every tray state has an icon, the preload and
+// build inputs exist, and the packaging config ships what the app needs.
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+
+const ROOT = path.join(__dirname, "..");
+const main = fs.readFileSync(path.join(ROOT, "main.js"), "utf8");
+const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+
+test("every agent state has a tray icon", () => {
+  const { AgentState } = require("../src/core/state");
+  const s = new AgentState();
+  const states = new Set(["connected", "listening", "busy", "paused", "emergency_stopped", "offline"]);
+  s.emergencyStop("t");
+  states.add(s.compute());
+  for (const state of states) assert.ok(fs.existsSync(path.join(ROOT, "assets", `tray-${state}.png`)), `missing tray-${state}.png`);
+  assert.ok(fs.existsSync(path.join(ROOT, "assets", "icon.png")));
+});
+
+test("main.js wires the required desktop behaviours", () => {
+  assert.match(main, /requestSingleInstanceLock/, "single-instance lock");
+  assert.match(main, /e\.preventDefault\(\);\s*\n\s*mainWindow\.hide\(\)/, "close hides to tray");
+  assert.match(main, /globalShortcut\.register/, "emergency hotkey");
+  assert.match(main, /setLoginItemSettings/, "Windows auto-start");
+  assert.match(main, /confirmLocal/, "second local confirmation");
+  assert.match(main, /browser:\s*\{\s*fill:\s*browserFill\s*\}/, "browser automation host");
+  assert.match(main, /window-all-closed[\s\S]{0,120}keep running/, "does not quit when windows close");
+  assert.match(main, /contextIsolation: true/, "context isolation");
+  assert.ok(!/nodeIntegration:\s*true/.test(main), "node integration must stay off");
+  assert.match(main, /safeStorage/, "OS-encrypted device secrets when available");
+});
+
+test("preload exposes only the desktop bridge", () => {
+  const preload = fs.readFileSync(path.join(ROOT, "preload.js"), "utf8");
+  assert.match(preload, /contextBridge\.exposeInMainWorld\("jarvisDesktop"/);
+  assert.ok(!/ipcRenderer\.on\(/.test(preload), "no unrestricted event bridge");
+  for (const channel of ["owner-device", "agent-info", "open-path"]) assert.ok(preload.includes(channel), `missing ${channel}`);
+  const handled = [...main.matchAll(/ipcMain\.handle\("([^"]+)"/g)].map((m) => m[1]);
+  for (const channel of [...preload.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1])) {
+    assert.ok(handled.includes(channel), `preload calls ${channel} but main.js does not handle it`);
+  }
+});
+
+test("packaging ships the UI and the agent, and nothing needs a key", () => {
+  assert.deepEqual(pkg.dependencies, {});
+  assert.ok(pkg.build.extraResources.some((r) => r.to === "client-dist"));
+  for (const f of ["main.js", "preload.js", "headless.js", "src/**/*", "assets/**/*"]) assert.ok(pkg.build.files.includes(f), `missing ${f} in build.files`);
+  assert.equal(pkg.build.win.target, "nsis");
+});

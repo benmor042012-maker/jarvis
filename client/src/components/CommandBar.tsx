@@ -3,30 +3,35 @@ import { useEffect, useRef, useState } from "react";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { useJarvis } from "../state/jarvisStore";
 
+const EXAMPLES = ["open notepad", "צלם מסך", "create file notes.txt with hello", "remind me in 10 minutes to stretch", "what time is it"];
+
 export function CommandBar() {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const busy = useJarvis((s) => s.busy);
-  const pending = useJarvis((s) => s.pendingPlan);
+  const connection = useJarvis((s) => s.connection);
+  const emergency = useJarvis((s) => s.status?.emergency ?? false);
+  const pending = useJarvis((s) => s.pendingPlans.length > 0);
   const submitCommand = useJarvis((s) => s.submitCommand);
   const cancelCurrent = useJarvis((s) => s.cancelCurrent);
   const setOrb = useJarvis((s) => s.setOrb);
+  const language = useJarvis((s) => s.settings?.language ?? "he");
 
   const speech = useSpeechRecognition({
+    lang: language === "he" ? "he-IL" : "en-US",
     onResult: (text) => {
-      setValue(text);
-      setOrb("idle");
+      setValue("");
       void submitCommand(text);
     },
     onStart: () => {
       setOrb("listening");
     },
     onEnd: () => {
-      if (useJarvis.getState().orb === "listening") setOrb("idle");
+      if (useJarvis.getState().orb === "listening") useJarvis.getState().setOrb("idle");
     },
     onError: (msg) => {
       useJarvis.getState().addLog("error", msg);
-      useJarvis.getState().flash("error", "MIC ERROR", 2000);
+      useJarvis.getState().flash("error", "MIC ERROR", 2200);
     },
   });
 
@@ -34,7 +39,6 @@ export function CommandBar() {
     inputRef.current?.focus();
   }, []);
 
-  // "/" focuses the command box from anywhere, Escape stops.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -51,9 +55,20 @@ export function CommandBar() {
     };
   }, [busy, cancelCurrent]);
 
+  const disabled = connection !== "online" || emergency;
+  const placeholder = emergency
+    ? "Emergency stop is active — clear it on the computer first"
+    : connection === "offline"
+      ? "Agent offline — the computer cannot be controlled right now"
+      : connection === "unpaired"
+        ? "Pair this device first"
+        : pending
+          ? "An approval is waiting — answer it first"
+          : `Ask JARVIS… e.g. “${EXAMPLES[Math.floor(Date.now() / 8000) % EXAMPLES.length] ?? EXAMPLES[0] ?? ""}”`;
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!value.trim() || busy) return;
+    if (!value.trim() || busy || disabled) return;
     void submitCommand(value);
     setValue("");
   };
@@ -71,13 +86,12 @@ export function CommandBar() {
           onChange={(e) => {
             setValue(e.target.value);
           }}
-          placeholder={pending ? "Confirm or dismiss the plan above first" : "Ask JARVIS… e.g. “open youtube” or “create file notes.txt with hello”"}
+          placeholder={placeholder}
           autoComplete="off"
           spellCheck={false}
-          disabled={!!pending}
-          maxLength={2000}
+          disabled={disabled}
+          maxLength={4000}
         />
-
         {speech.supported && (
           <button
             type="button"
@@ -89,7 +103,7 @@ export function CommandBar() {
               if (speech.listening) speech.stop();
               else void speech.start();
             }}
-            disabled={busy || !!pending}
+            disabled={busy || disabled}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="9" y="3" width="6" height="11" rx="3" />
@@ -97,22 +111,18 @@ export function CommandBar() {
             </svg>
           </button>
         )}
-
         {busy ? (
           <button type="button" className="btn btn-danger" onClick={() => void cancelCurrent()} aria-label="Stop the current task">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-            Stop
+            Stop task
           </button>
         ) : (
-          <button type="submit" className="btn btn-primary" disabled={!value.trim() || !!pending}>
+          <button type="submit" className="btn btn-primary" disabled={!value.trim() || disabled}>
             Run
           </button>
         )}
       </form>
       <p className="hint">
-        Press <kbd>/</kbd> to focus, <kbd>Enter</kbd> to run, <kbd>Esc</kbd> to stop.
+        <kbd>/</kbd> focus · <kbd>Enter</kbd> run · <kbd>Esc</kbd> stop · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Esc</kbd> emergency stop (on the computer)
       </p>
     </section>
   );

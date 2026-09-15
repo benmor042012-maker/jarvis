@@ -1,36 +1,30 @@
 {
   "name": "jarvis-desktop",
-  "version": "1.0.0",
-  "description": "JARVIS Desktop Agent — background service with voice wake word and computer control",
+  "version": "3.0.0",
+  "description": "JARVIS desktop agent: local AI assistant and Windows computer control. Self-contained, no cloud, no API keys.",
   "main": "main.js",
+  "license": "MIT",
+  "private": true,
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
+    "headless": "node headless.js",
+    "test": "node --test tests/*.test.js",
     "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux"
+    "build:linux": "electron-builder --linux",
+    "build:mac": "electron-builder --mac"
   },
   "build": {
-    "appId": "com.jarvis.desktop",
+    "appId": "local.jarvis.desktop",
     "productName": "JARVIS",
     "directories": { "output": "dist" },
-    "win": {
-      "target": "nsis",
-      "icon": "ui/icon.ico"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "ui/icon.icns"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "ui/icon.png"
-    }
+    "files": ["main.js", "preload.js", "headless.js", "src/**/*", "assets/**/*", "package.json"],
+    "extraResources": [{ "from": "../client/dist", "to": "client-dist" }],
+    "win": { "target": "nsis", "icon": "assets/icon.png" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "linux": { "target": "AppImage", "icon": "assets/icon.png" },
+    "mac": { "target": "dmg", "icon": "assets/icon.png" }
   },
-  "dependencies": {
-    "nodemailer": "^6.9.0",
-    "screenshot-desktop": "^1.15.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"

@@ -1,24 +1,19 @@
 {
   "name": "jarvis",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "JARVIS — personal AI assistant: Cloudflare Worker brain, web voice interface, desktop agent, and a local safe-action app.",
+  "license": "MIT",
+  "description": "JARVIS — a self-contained local AI assistant and Windows computer-control agent. No cloud, no accounts, no API keys, no payments.",
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "tail": "wrangler tail",
-    "db:schema": "wrangler d1 execute jarvis-memory --remote --file=schema.sql",
-    "app": "node scripts/start-app.mjs",
-    "app:install": "npm --prefix client install",
-    "app:build": "npm --prefix client run build",
-    "test": "node --test tests/worker.test.mjs && python -m pytest -q",
-    "lint": "ruff check server tests && npm --prefix client run lint",
-    "test:worker": "node --test tests/worker.test.mjs",
-    "test:app": "python -m pytest -q"
-  },
-  "devDependencies": {
-    "wrangler": "^4.0.0"
+    "start": "node scripts/start.mjs",
+    "headless": "node scripts/start.mjs --headless",
+    "build": "npm --prefix client run build",
+    "build:installer": "npm --prefix client run build && npm --prefix desktop run build:win",
+    "test": "npm --prefix desktop test",
+    "lint": "npm --prefix client run lint",
+    "typecheck": "npm --prefix client run typecheck",
+    "verify": "node scripts/verify.mjs"
   }
 }
