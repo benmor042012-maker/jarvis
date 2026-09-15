@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // Runs everything a reviewer would run: tests, lint, typecheck, build, and a
 // scan proving the product contains no cloud provider, API key or payment path.
-import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { runSync } from "./spawn-compat.mjs";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WIN = process.platform === "win32";
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", g: "\x1b[32m", red: "\x1b[31m", c: "\x1b[36m" };
 let failed = 0;
 
 function step(name, cmd, args, opts = {}) {
   process.stdout.write(`${C.c}▸${C.r} ${name}… `);
-  const r = spawnSync(cmd, args, { cwd: ROOT, encoding: "utf8", shell: WIN, ...opts });
+  const r = runSync(cmd, args, { cwd: ROOT, encoding: "utf8", ...opts });
   const ok = r.status === 0;
   console.log(ok ? `${C.g}pass${C.r}` : `${C.red}FAIL${C.r}`);
   if (!ok) {
