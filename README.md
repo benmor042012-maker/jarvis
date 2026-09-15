@@ -23,6 +23,14 @@ npm start         # פותח את ג'רביס
 דרוש Node.js 18+. בינה מלאכותית מקומית היא אופציונלית: אם יש Ollama או LocalAI — ג'רביס משתמש בהם;
 אם אין — הוא אומר **MOCK MODE** במפורש ועובר למתכנן כללים דטרמיניסטי, בלי להעמיד פנים.
 
+להתקנת המוח המקומי בפקודה אחת (חינם, בלי חשבון ובלי מפתח):
+
+```
+npm run ai
+```
+
+הוא בודק אם Ollama מותקן ורץ, ממליץ על מודל לפי הזיכרון של המחשב, ומוריד אותו.
+
 | מצב | מה מותר |
 |---|---|
 | **Safe** | קריאה בלבד, פעולות הפיכות |
@@ -112,6 +120,7 @@ connected state.
 
 ```bash
 npm run setup           # install + build + test
+npm run ai              # optional: install the local AI brain (Ollama + a model)
 npm start               # desktop agent (or headless if Electron is missing)
 npm run headless        # agent without a window (Linux/servers/CI)
 npm test                # agent test suite
