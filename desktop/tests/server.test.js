@@ -1,0 +1,268 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+const { isolate, startAgent, client } = require("./helpers");
+const home = isolate();
+
+let agent, base, owner, remote, ownerClient, remoteClient;
+const localConfirmations = [];
+let confirmAnswer = true;
+
+test.before(async () => {
+  ({ agent, base } = await startAgent({ host: { confirmLocal: async (plan) => { localConfirmations.push(plan.plan_id); return confirmAnswer; } } }));
+  owner = agent.ownerDevice();
+  ownerClient = client(base, owner);
+  const { code } = agent.devices.createPairCode();
+  const res = await fetch(base + "/api/pair", { method: "POST", body: JSON.stringify({ code, name: "phone" }), headers: { "content-type": "application/json" } });
+  const body = await res.json();
+  remote = { id: body.device_id, secret: body.secret, role: body.role };
+  remoteClient = client(base, remote);
+});
+test.after(() => agent.stop());
+
+test("health is unauthenticated and reveals only state", async () => {
+  const h = await (await fetch(base + "/api/health")).json();
+  assert.equal(h.ok, true);
+  assert.equal(h.requires_pairing, true);
+  assert.ok(!("devices" in h));
+});
+
+test("pairing failures: bad code, second use, rate limit", async () => {
+  const bad = await fetch(base + "/api/pair", { method: "POST", body: JSON.stringify({ code: "00000000", name: "x" }), headers: { "content-type": "application/json" } });
+  assert.equal(bad.status, 401);
+});
+
+test("unsigned / malformed / wrong-path requests are rejected", async () => {
+  const r1 = await fetch(base + "/api/status", { method: "POST", body: "{}" });
+  assert.equal(r1.status, 400);
+  const r2 = await fetch(base + "/api/status", { method: "GET" });
+  assert.equal(r2.status, 405);
+  const r3 = await remoteClient.call("status", {}, { mutate: (e) => ({ ...e, signature: "ff" }) });
+  assert.equal(r3.body.error, "unauthorized");
+  const r4 = await remoteClient.call("status", { a: 1 }, { mutate: (e) => ({ ...e, params: { a: 2 } }) });
+  assert.equal(r4.body.error, "modified");
+});
+
+test("replay and duplicate detection over HTTP", async () => {
+  let captured;
+  const r1 = await remoteClient.call("status", {}, { mutate: (e) => { captured = e; return e; } });
+  assert.equal(r1.status, 200);
+  const again = await fetch(base + "/api/status", { method: "POST", body: JSON.stringify(captured), headers: { "content-type": "application/json" } });
+  assert.equal((await again.json()).error, "duplicated");
+});
+
+test("DNS rebinding defence: public Host header refused", async () => {
+  const status = await new Promise((resolve, reject) => {
+    const http = require("http");
+    const u = new URL(base);
+    http.get({ host: u.hostname, port: u.port, path: "/api/health", headers: { host: "evil.example.com" } }, (res) => { res.resume(); resolve(res.statusCode); }).on("error", reject);
+  });
+  assert.equal(status, 421);
+});
+
+test("status panel shows local-only cost/network facts", async () => {
+  const r = await ownerClient.call("status");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.cost_network.external_calls, 0);
+  assert.equal(r.body.cost_network.api_keys_configured, 0);
+  assert.equal(r.body.cost_network.payment_configured, false);
+  assert.equal(r.body.cost_network.outgoing_messages, 0);
+});
+
+test("owner-only routes are refused for remote devices", async () => {
+  const r = await remoteClient.call("settings/update", { settings: { mode: "safe" } });
+  assert.equal(r.status, 403);
+  const r2 = await remoteClient.call("devices/pair-code");
+  assert.equal(r2.status, 403);
+  const ok = await ownerClient.call("devices/pair-code");
+  assert.equal(ok.status, 200);
+  assert.match(ok.body.code, /^\d{8}$/);
+});
+
+test("plan -> low risk executes; medium needs approval bound to hash; modified approval refused", async () => {
+  const p = await remoteClient.call("command", { command: "what time is it" });
+  assert.equal(p.status, 200);
+  assert.equal(p.body.plan.requires_approval, false);
+  assert.equal(p.body.plan.mock, true);
+  const ex = await remoteClient.call("plans/execute", { plan_id: p.body.plan.plan_id });
+  assert.equal(ex.status, 200);
+  let job = ex.body.job;
+  for (let i = 0; i < 50 && job.status === "running" || job.status === "queued"; i++) { await new Promise((r) => setTimeout(r, 20)); job = (await remoteClient.call("jobs/get", { job_id: job.job_id })).body.job; }
+  assert.equal(job.status, "completed");
+  assert.equal(job.results[0].tool, "current_time");
+
+  const m = await remoteClient.call("command", { command: "create file hello.txt with hi" });
+  assert.equal(m.body.plan.requires_approval, true);
+  assert.equal(m.body.plan.actions[0].decision, "ask");
+  const noApproval = await remoteClient.call("plans/execute", { plan_id: m.body.plan.plan_id });
+  assert.equal(noApproval.body.error, "approval_required");
+  const tampered = await remoteClient.call("plans/approve", { plan_id: m.body.plan.plan_id, actions_hash: "deadbeef", decision: "approve" });
+  assert.equal(tampered.body.error, "modified");
+  const ok = await remoteClient.call("plans/approve", { plan_id: m.body.plan.plan_id, actions_hash: m.body.plan.actions_hash, decision: "approve" });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  let j = ok.body.job;
+  for (let i = 0; i < 50 && (j.status === "running" || j.status === "queued"); i++) { await new Promise((r) => setTimeout(r, 20)); j = (await remoteClient.call("jobs/get", { job_id: j.job_id })).body.job; }
+  assert.equal(j.status, "completed");
+  assert.ok(fs.existsSync(path.join(home, "workspace", "hello.txt")));
+  const twice = await remoteClient.call("plans/approve", { plan_id: m.body.plan.plan_id, actions_hash: m.body.plan.actions_hash, decision: "approve" });
+  assert.equal(twice.status, 409);
+});
+
+test("rejecting a plan runs nothing", async () => {
+  const m = await remoteClient.call("command", { command: "create file never.txt with x" });
+  const r = await remoteClient.call("plans/approve", { plan_id: m.body.plan.plan_id, actions_hash: m.body.plan.actions_hash, decision: "reject" });
+  assert.equal(r.body.plan.status, "rejected");
+  assert.ok(!fs.existsSync(path.join(home, "workspace", "never.txt")));
+});
+
+test("high risk from a remote device needs the second local confirmation", async () => {
+  const m = await remoteClient.call("command", { command: "delete hello.txt" });
+  assert.equal(m.body.plan.highest_risk, "high");
+  confirmAnswer = false;
+  const denied = await remoteClient.call("plans/approve", { plan_id: m.body.plan.plan_id, actions_hash: m.body.plan.actions_hash, decision: "approve" });
+  assert.equal(denied.body.error, "local_confirmation_denied");
+  assert.ok(fs.existsSync(path.join(home, "workspace", "hello.txt")));
+  confirmAnswer = true;
+  const m2 = await remoteClient.call("command", { command: "delete hello.txt" });
+  const ok = await remoteClient.call("plans/approve", { plan_id: m2.body.plan.plan_id, actions_hash: m2.body.plan.actions_hash, decision: "approve" });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  let j = ok.body.job;
+  for (let i = 0; i < 50 && (j.status === "running" || j.status === "queued"); i++) { await new Promise((r) => setTimeout(r, 20)); j = (await remoteClient.call("jobs/get", { job_id: j.job_id })).body.job; }
+  assert.equal(j.status, "completed");
+  assert.ok(localConfirmations.length >= 2);
+});
+
+test("safe mode denies medium actions with a reason; refusals never plan", async () => {
+  await ownerClient.call("mode", { mode: "safe" });
+  const m = await remoteClient.call("command", { command: "create file s.txt with x" });
+  assert.equal(m.body.plan.actions[0].decision, "deny");
+  assert.equal(m.body.plan.actions[0].reason, "safe_mode");
+  const ex = await remoteClient.call("plans/execute", { plan_id: m.body.plan.plan_id });
+  let j = ex.body.job;
+  for (let i = 0; i < 50 && (j.status === "running" || j.status === "queued"); i++) { await new Promise((r) => setTimeout(r, 20)); j = (await remoteClient.call("jobs/get", { job_id: j.job_id })).body.job; }
+  assert.equal(j.status, "denied");
+  await ownerClient.call("mode", { mode: "assistant" });
+  const refuse = await remoteClient.call("command", { command: "buy me a laptop" });
+  assert.equal(refuse.body.plan.actions.length, 0);
+});
+
+test("emergency stop cancels and blocks; only owner clears", async () => {
+  const s = await remoteClient.call("emergency-stop");
+  assert.equal(s.status, 200);
+  const p = await remoteClient.call("command", { command: "what time is it" });
+  assert.equal(p.body.plan.denied, "emergency_stopped");
+  const c = await remoteClient.call("emergency-clear");
+  assert.equal(c.status, 403);
+  const c2 = await ownerClient.call("emergency-clear");
+  assert.equal(c2.body.state, "connected");
+});
+
+test("cancellation of a running job", async () => {
+  agent.registry.register({ name: "t_sleep", title: "sleep", description: "x", schema: { type: "object", properties: {} }, risk: "low", reversible: true, timeoutMs: 10000, run: (_p, { signal }) => new Promise((res, rej) => { const t = setTimeout(() => res("done"), 2000); signal.addEventListener("abort", () => { clearTimeout(t); rej(new Error("cancelled")); }); }) });
+  const plan = agent.executor._storePlan({ command: "sleep", message: "m", actions: [{ tool: "t_sleep", params: {} }], provider: "mock", mock: true, device: owner });
+  const ex = await ownerClient.call("plans/execute", { plan_id: plan.plan_id });
+  const c = await ownerClient.call("jobs/cancel", { job_id: ex.body.job.job_id });
+  assert.equal(c.status, 200);
+  let j = c.body.job;
+  for (let i = 0; i < 50 && j.status === "running"; i++) { await new Promise((r) => setTimeout(r, 20)); j = (await ownerClient.call("jobs/get", { job_id: j.job_id })).body.job; }
+  assert.equal(j.status, "cancelled");
+});
+
+test("plan expiry", async () => {
+  const plan = agent.executor._storePlan({ command: "x", message: "m", actions: [{ tool: "current_time", params: {} }], provider: "mock", mock: true, device: owner });
+  plan.expires_at = Date.now() - 1;
+  const r = await ownerClient.call("plans/execute", { plan_id: plan.plan_id });
+  assert.equal(r.body.error, "expired");
+});
+
+test("SSE token is single use and streams status", async () => {
+  const t = await remoteClient.call("events/token");
+  const res = await fetch(base + "/api/events?token=" + t.body.token);
+  assert.equal(res.status, 200);
+  const reader = res.body.getReader();
+  const { value } = await reader.read();
+  assert.match(new TextDecoder().decode(value), /connected/);
+  await reader.cancel();
+  const again = await fetch(base + "/api/events?token=" + t.body.token);
+  assert.equal(again.status, 401);
+});
+
+test("device revocation cuts access; remote can revoke itself only", async () => {
+  const { code } = agent.devices.createPairCode();
+  const res = await (await fetch(base + "/api/pair", { method: "POST", body: JSON.stringify({ code, name: "tablet" }), headers: { "content-type": "application/json" } })).json();
+  const tablet = client(base, { id: res.device_id, secret: res.secret });
+  const forbidden = await tablet.call("devices/revoke", { device_id: remote.id });
+  assert.equal(forbidden.status, 403);
+  const self = await tablet.call("devices/revoke", { device_id: res.device_id });
+  assert.equal(self.status, 200);
+  const after = await tablet.call("status");
+  assert.equal(after.body.detail, "revoked");
+});
+
+test("audit log is redacted and readable; export/delete work", async () => {
+  const a = await remoteClient.call("audit/read", { limit: 50 });
+  assert.ok(a.body.entries.length > 5);
+  assert.ok(a.body.entries.every((e) => !JSON.stringify(e).includes(remote.secret)));
+  const e = await ownerClient.call("data/export");
+  assert.ok(e.body.audit.length >= 1);
+  assert.ok(!JSON.stringify(e.body).includes(remote.secret));
+  const d = await ownerClient.call("data/delete", { audit: true, memory: false, drafts: false, screenshots: false });
+  assert.ok(d.body.deleted.audit_files >= 1);
+});
+
+test("settings validation refuses cloud model endpoints and bad ports", async () => {
+  const r = await ownerClient.call("settings/update", { settings: { ai: { ollamaUrl: "https://api.openai.com/v1" } } });
+  assert.equal(r.status, 400);
+  const r2 = await ownerClient.call("settings/update", { settings: { server: { port: 80 } } });
+  assert.equal(r2.status, 400);
+  const r3 = await ownerClient.call("settings/update", { settings: { approvedFolders: ["/definitely/not/here"] } });
+  assert.equal(r3.status, 400);
+  const ok = await ownerClient.call("settings/update", { settings: { language: "en" } });
+  assert.equal(ok.body.settings.language, "en");
+});
+
+test("tools list and per-tool policy", async () => {
+  const t = await remoteClient.call("tools/list");
+  assert.ok(t.body.tools.length > 30);
+  const bad = await ownerClient.call("tools/policy", { tool: "open_url", policy: "sometimes" });
+  assert.equal(bad.status, 400);
+  const ok = await ownerClient.call("tools/policy", { tool: "open_url", policy: "blocked" });
+  assert.equal(ok.body.tools.find((x) => x.name === "open_url").policy, "blocked");
+  const p = await remoteClient.call("command", { command: "open youtube" });
+  assert.equal(p.body.plan.actions[0].decision, "deny");
+  await ownerClient.call("tools/policy", { tool: "open_url", policy: "default" });
+});
+
+test("ai detection reports mock mode honestly when nothing is installed", async () => {
+  const r = await remoteClient.call("ai/detect", { force: true });
+  assert.equal(r.body.mock_mode, true);
+  assert.ok(r.body.capability_warning.length > 20);
+});
+
+test("drafts: create, warnings, export, opt-out; nothing is sent", async () => {
+  const d1 = await remoteClient.call("drafts/create", { recipient: "dan@example.com", purpose: "follow_up", language: "en", name: "Dan", topic: "the kitchen" });
+  assert.equal(d1.status, 200, JSON.stringify(d1.body));
+  assert.match(d1.body.draft.text, /Dan/);
+  assert.equal(d1.body.draft.label, "DRAFT ONLY — NOTHING IS SENT");
+  const d2 = await remoteClient.call("drafts/create", { recipient: "dan@example.com", purpose: "follow_up", language: "en", name: "Dan" });
+  assert.ok(d2.body.draft.warnings.some((w) => w.code === "duplicate"));
+  const t = await remoteClient.call("drafts/create", { recipient: "x@y.z", purpose: "custom", body: "hi", translate_to: "en" });
+  assert.ok(t.body.draft.notes.some((n) => /local model/.test(n)));
+  await remoteClient.call("drafts/optout", { recipient: "dan@example.com" });
+  const d3 = await remoteClient.call("drafts/create", { recipient: "dan@example.com", purpose: "thanks", language: "he", name: "דן" });
+  assert.ok(d3.body.draft.warnings.some((w) => w.code === "opted_out"));
+  const ex = await remoteClient.call("drafts/export", { id: d1.body.draft.id });
+  assert.ok(fs.readFileSync(ex.body.path, "utf8").startsWith("DRAFT ONLY"));
+  const list = await remoteClient.call("drafts/list");
+  assert.ok(list.body.drafts.length >= 4);
+  const bad = await remoteClient.call("drafts/create", { purpose: "custom" });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.detail, /body is required/);
+});
+
+test("static fallback page when UI is not built", async () => {
+  const r = await fetch(base + "/");
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /JARVIS agent is running/);
+});

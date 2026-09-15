@@ -1,12 +1,6 @@
-.wrangler/
 node_modules/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
-.env
-server/data/
-workspace/*
-!workspace/README.txt
+dist/
 client/dist/
+desktop/dist/
+*.log
+.DS_Store

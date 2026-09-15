@@ -1,75 +1,49 @@
-import type {
-  Action,
-  ConnectionTestResult,
-  ErrorResponse,
-  HealthResponse,
-  JobView,
-  PlanResponse,
-  SettingsUpdate,
-  SettingsView,
-} from "./types";
+import { AgentApi } from "./lib/protocol";
+import type { AiStatus, AppInfo, AuditEntry, DeviceInfo, Draft, DraftTemplate, Job, PairCode, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, Status, ToolInfo } from "./types";
 
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
+export const agentApi = new AgentApi("");
 
-function isErrorResponse(v: unknown): v is ErrorResponse {
-  return typeof v === "object" && v !== null && "error" in v;
-}
-
-async function request<T>(path: string, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) },
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError(0, "network", "The local JARVIS server is not reachable. Start it with `uvicorn server.main:app --port 8000`.");
-  }
-  const text = await res.text();
-  let body: unknown = null;
-  if (text) {
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      body = null;
-    }
-  }
-  if (!res.ok) {
-    if (isErrorResponse(body)) throw new ApiError(res.status, body.error, body.detail ?? body.error);
-    // FastAPI validation errors come as { detail: [...] } or { detail: "..." }
-    if (typeof body === "object" && body !== null && "detail" in body) {
-      const d = body.detail;
-      const msg =
-        typeof d === "string"
-          ? d
-          : Array.isArray(d)
-            ? d.map((e: unknown) => (typeof e === "object" && e !== null && "msg" in e ? String(e.msg) : "")).join("; ")
-            : `Request failed (${String(res.status)})`;
-      throw new ApiError(res.status, "validation", msg);
-    }
-    throw new ApiError(res.status, "http", `Request failed (${String(res.status)})`);
-  }
-  return body as T;
-}
+type Ok<T> = { ok: true; request_id: string } & T;
 
 export const api = {
-  health: () => request<HealthResponse>("/api/health"),
-  command: (command: string, signal?: AbortSignal) =>
-    request<PlanResponse>("/api/command", { method: "POST", body: JSON.stringify({ command }), ...(signal ? { signal } : {}) }),
-  execute: (actions: Action[], confirmed: boolean) =>
-    request<JobView>("/api/execute", { method: "POST", body: JSON.stringify({ actions, confirmed }) }),
-  job: (id: string) => request<JobView>(`/api/jobs/${encodeURIComponent(id)}`),
-  cancelJob: (id: string) => request<JobView>(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
-  settings: () => request<SettingsView>("/api/settings"),
-  updateSettings: (update: SettingsUpdate) => request<SettingsView>("/api/settings", { method: "PUT", body: JSON.stringify(update) }),
-  testConnection: () => request<ConnectionTestResult>("/api/settings/test", { method: "POST" }),
+  status: () => agentApi.call<Ok<Status>>("status"),
+  command: (command: string, signal?: AbortSignal) => agentApi.call<Ok<{ plan: Plan }>>("command", { command }, { timeoutMs: 180000, ...(signal ? { signal } : {}) }),
+  pendingPlans: () => agentApi.call<Ok<{ plans: Plan[] }>>("plans/pending"),
+  approvePlan: (plan_id: string, actions_hash: string, decision: "approve" | "reject", scope: "once" | "task") =>
+    agentApi.call<Ok<{ plan: Plan; job?: Job }>>("plans/approve", { plan_id, actions_hash, decision, scope }, { timeoutMs: 180000 }),
+  executePlan: (plan_id: string) => agentApi.call<Ok<{ job: Job }>>("plans/execute", { plan_id }),
+  job: (job_id: string) => agentApi.call<Ok<{ job: Job }>>("jobs/get", { job_id }),
+  cancelJob: (job_id: string) => agentApi.call<Ok<{ job: Job }>>("jobs/cancel", { job_id }),
+  emergencyStop: () => agentApi.call<Ok<{ stopped: { cancelled_jobs: number; killed_processes: number } }>>("emergency-stop"),
+  emergencyClear: () => agentApi.call<Ok<Status>>("emergency-clear"),
+  pause: (paused: boolean) => agentApi.call<Ok<Status>>("pause", { paused }),
+  setMode: (mode: string) => agentApi.call<Ok<Status>>("mode", { mode }),
+  settings: () => agentApi.call<Ok<{ settings: Settings }>>("settings/get"),
+  updateSettings: (settings: SettingsUpdate) => agentApi.call<Ok<{ settings: Settings }>>("settings/update", { settings }),
+  tools: () => agentApi.call<Ok<{ tools: ToolInfo[] }>>("tools/list"),
+  setToolPolicy: (tool: string, policy: PolicyValue | "default") => agentApi.call<Ok<{ tools: ToolInfo[] }>>("tools/policy", { tool, policy }),
+  apps: () => agentApi.call<Ok<{ apps: AppInfo[] }>>("apps/list"),
+  aiDetect: (force = false) => agentApi.call<Ok<AiStatus>>("ai/detect", { force }, { timeoutMs: 20000 }),
+  devices: () => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/list"),
+  pairCode: () => agentApi.call<Ok<PairCode>>("devices/pair-code"),
+  revokeDevice: (device_id: string) => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/revoke", { device_id }),
+  renameDevice: (device_id: string, name: string) => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/rename", { device_id, name }),
+  audit: (limit = 200, days = 7) => agentApi.call<Ok<{ entries: AuditEntry[] }>>("audit/read", { limit, days }),
+  exportData: () => agentApi.call<Ok<Record<string, unknown>>>("data/export", {}, { timeoutMs: 60000 }),
+  deleteData: (what: Record<string, boolean>) => agentApi.call<Ok<{ deleted: Record<string, unknown> }>>("data/delete", what),
+  eventsToken: () => agentApi.call<Ok<{ token: string }>>("events/token"),
+  previewToken: () => agentApi.call<Ok<{ token: string }>>("preview/token"),
+  draftTemplates: (language: string) => agentApi.call<Ok<{ templates: DraftTemplate[]; label: string }>>("drafts/templates", { language }),
+  createDraft: (params: Record<string, unknown>) => agentApi.call<Ok<{ draft: Draft }>>("drafts/create", params, { timeoutMs: 180000 }),
+  drafts: () => agentApi.call<Ok<{ drafts: Draft[]; optout: string[] }>>("drafts/list"),
+  updateDraft: (id: string, patch: { text?: string; reviewed?: boolean; timing?: string }) => agentApi.call<Ok<{ draft: Draft }>>("drafts/update", { id, ...patch }),
+  deleteDraft: (id: string) => agentApi.call<Ok<{ deleted: boolean }>>("drafts/delete", { id }),
+  exportDraft: (id: string) => agentApi.call<Ok<{ path: string }>>("drafts/export", { id }),
+  optOut: (recipient: string, remove = false) => agentApi.call<Ok<{ optout: string[] }>>("drafts/optout", { recipient, remove }),
+  projectTemplates: () => agentApi.call<Ok<{ templates: ProjectTemplate[] }>>("projects/templates"),
+  projects: () => agentApi.call<Ok<{ projects: ProjectInfo[] }>>("projects/list"),
+  planProject: (params: Record<string, unknown>) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/plan", params, { timeoutMs: 60000 }),
+  project: (task_id: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/get", { task_id }),
+  runProject: (task_id: string, hash: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/run", { task_id, hash }),
+  cancelProject: (task_id: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/cancel", { task_id }),
 };
