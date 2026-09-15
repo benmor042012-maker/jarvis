@@ -13,6 +13,20 @@ import {
   reminder_cancel, reminder_cancel_def,
 } from "./reminders.js";
 import {
+  calendar_list_events, calendar_list_def,
+  calendar_create_event, calendar_create_def,
+  calendar_update_event, calendar_update_def,
+  calendar_delete_event, calendar_delete_def,
+  calendar_find_free_time, calendar_free_def,
+} from "./calendar.js";
+import {
+  gmail_search, gmail_search_def,
+  gmail_read, gmail_read_def,
+  gmail_create_draft, gmail_draft_def,
+  gmail_send, gmail_send_def,
+  gmail_modify, gmail_modify_def,
+} from "./gmail.js";
+import {
   memory_write, memory_write_def,
   memory_search, memory_search_def,
   memory_forget, memory_forget_def,
@@ -31,6 +45,18 @@ export const TOOLS = {
   memory_write:    { def: memory_write_def,    run: (env, uid, a) => memory_write(env, uid, a), paid: false, source: "Cloudflare D1 + Vectorize + Workers AI (free tier)" },
   memory_search:   { def: memory_search_def,   run: (env, uid, a) => memory_search(env, uid, a), paid: false, source: "Cloudflare D1 + Vectorize (free tier)" },
   memory_forget:   { def: memory_forget_def,   run: (env, uid, a) => memory_forget(env, uid, a), paid: false, source: "Cloudflare D1 (free tier)" },
+  // Google Calendar — "Jarvis controls your calendar 24/7"
+  calendar_list_events:    { def: calendar_list_def,   run: (env, uid, a) => calendar_list_events(env, uid, a),    paid: false, source: "Google Calendar API (free)" },
+  calendar_create_event:   { def: calendar_create_def, run: (env, uid, a) => calendar_create_event(env, uid, a),   paid: false, source: "Google Calendar API (free)" },
+  calendar_update_event:   { def: calendar_update_def, run: (env, uid, a) => calendar_update_event(env, uid, a),   paid: false, source: "Google Calendar API (free)" },
+  calendar_delete_event:   { def: calendar_delete_def, run: (env, uid, a) => calendar_delete_event(env, uid, a),   paid: false, source: "Google Calendar API (free)" },
+  calendar_find_free_time: { def: calendar_free_def,   run: (env, uid, a) => calendar_find_free_time(env, uid, a), paid: false, source: "Google Calendar API (free)" },
+  // Gmail — "emails, replies, support, signups handled"
+  gmail_search:            { def: gmail_search_def,    run: (env, uid, a) => gmail_search(env, uid, a),       paid: false, source: "Gmail API (free)" },
+  gmail_read:              { def: gmail_read_def,      run: (env, uid, a) => gmail_read(env, uid, a),         paid: false, source: "Gmail API (free)" },
+  gmail_create_draft:      { def: gmail_draft_def,     run: (env, uid, a) => gmail_create_draft(env, uid, a), paid: false, source: "Gmail API (free)" },
+  gmail_send:              { def: gmail_send_def,      run: (env, uid, a) => gmail_send(env, uid, a),         paid: false, source: "Gmail API (free)" },
+  gmail_modify:            { def: gmail_modify_def,    run: (env, uid, a) => gmail_modify(env, uid, a),       paid: false, source: "Gmail API (free)" },
 };
 
 export function toolDefinitions() {

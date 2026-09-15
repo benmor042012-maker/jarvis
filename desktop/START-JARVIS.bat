@@ -9,7 +9,7 @@ echo    JARVIS - Personal AI Assistant
 echo   ================================
 echo.
 
-where node >/dev/null 2>nul
+where node >nul 2>nul
 if errorlevel 1 (
   echo   [X] Node.js is not installed.
   echo.
