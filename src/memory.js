@@ -2,6 +2,8 @@
 // Memory logic. D1 is source of truth. Vectorize is the retrieval index.
 // Uses Cloudflare Workers AI for embeddings — FREE tier.
 
+import { hasAI, hasDB, hasKey, hasVectorize, safeDB, MSG_NO_KEY } from "./env_guard.js";
+
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
 const CORE_LIMIT = 20;
@@ -17,22 +19,26 @@ subject: מזהה קנוני קצר לזיהוי כפילויות, למשל user
 אל תשמור חישובים חד-פעמיים, הקשר רגעי, או מידע שכבר ברור. אם אין מה לשמור, החזר [].`;
 
 export async function embed(env, text) {
+  if (!hasAI(env)) throw new Error("Workers AI לא מחובר");
   const r = await env.AI.run(EMBED_MODEL, { text: [text] });
   return r.data[0];
 }
 
 export async function retrieveMemories(env, userId, queryText) {
-  const coreRes = await env.DB.prepare(
+  // Memory is optional. Without D1 the assistant still answers, it just has
+  // no long-term recall, so never let a missing binding break the chat.
+  if (!hasDB(env)) return { core: [], associative: [] };
+  const coreRes = await safeDB(env, () => env.DB.prepare(
     `SELECT id, type, content FROM memories
      WHERE user_id = ? AND status = 'active' AND type IN ('semantic','preference')
      ORDER BY salience DESC, last_accessed_at DESC
      LIMIT ?`
-  ).bind(userId, CORE_LIMIT).all();
+  ).bind(userId, CORE_LIMIT).all(), { results: [] }, "retrieve core");
   const core = coreRes.results || [];
   const coreIds = new Set(core.map((m) => m.id));
 
   let associative = [];
-  if (queryText && queryText.trim()) {
+  if (queryText && queryText.trim() && hasAI(env) && hasVectorize(env)) {
     try {
       const vec = await embed(env, queryText);
       const q = await env.VECTORIZE.query(vec, {
@@ -76,15 +82,18 @@ export function buildMemoryBlock(core, associative) {
 
 export async function touchAccessed(env, mems) {
   const ids = mems.map((m) => m.id).filter(Boolean);
-  if (!ids.length) return;
+  if (!ids.length || !hasDB(env)) return;
   const ph = ids.map(() => "?").join(",");
-  await env.DB.prepare(
+  await safeDB(env, () => env.DB.prepare(
     `UPDATE memories SET last_accessed_at = ?, access_count = access_count + 1
      WHERE id IN (${ph})`
-  ).bind(Date.now(), ...ids).run();
+  ).bind(Date.now(), ...ids).run(), null, "touchAccessed");
 }
 
 export async function extractAndStore(env, userId, userMsg, assistantMsg) {
+  // Background write. Needs both a model (to decide what is worth keeping)
+  // and D1 (to keep it). Without either, silently skip.
+  if (!hasDB(env) || !hasKey(env)) return null;
   const transcript = `משתמש: ${userMsg}\nJarvis: ${assistantMsg}`;
   let candidates;
   try {
@@ -124,6 +133,7 @@ export async function rememberExplicit(env, userId, content, opts = {}) {
 }
 
 export async function forgetBySubject(env, userId, subject) {
+  if (!hasDB(env)) return 0;
   const rows = await env.DB.prepare(
     `SELECT id FROM memories WHERE user_id = ? AND subject = ? AND status = 'active'`
   ).bind(userId, subject).all();
@@ -136,11 +146,13 @@ export async function forgetBySubject(env, userId, subject) {
 }
 
 export async function forgetById(env, id) {
+  if (!hasDB(env)) return;
   await env.DB.prepare(`DELETE FROM memories WHERE id = ?`).bind(id).run();
   try { await env.VECTORIZE.deleteByIds([id]); } catch (e) {}
 }
 
 export async function forgetAll(env, userId) {
+  if (!hasDB(env)) return 0;
   const rows = await env.DB.prepare(
     `SELECT id FROM memories WHERE user_id = ?`
   ).bind(userId).all();
@@ -153,6 +165,7 @@ export async function forgetAll(env, userId) {
 }
 
 async function reconcileAndStore(env, userId, mem) {
+  if (!hasDB(env)) return null;
   const now = Date.now();
   const id = crypto.randomUUID();
   const type = mem.type || "semantic";
@@ -179,6 +192,7 @@ async function reconcileAndStore(env, userId, mem) {
   ).bind(id, userId, type, mem.subject || null, mem.content, salience, now, now).run();
 
   try {
+    if (!hasVectorize(env)) return id;
     const vec = await embed(env, mem.content);
     await env.VECTORIZE.upsert([
       { id, values: vec, metadata: { memory_id: id, user_id: userId, type } },
@@ -190,6 +204,7 @@ async function reconcileAndStore(env, userId, mem) {
 }
 
 export async function consolidate(env) {
+  if (!hasDB(env)) return;
   const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - THIRTY_DAYS;
   const stale = await env.DB.prepare(
@@ -206,6 +221,9 @@ export async function consolidate(env) {
 }
 
 export async function callAnthropic(env, body) {
+  // A missing key is a configuration problem, not a crash: report it in the
+  // same shape the Anthropic API uses so callers render it as a message.
+  if (!hasKey(env)) return { error: { message: MSG_NO_KEY }, status: 401 };
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {

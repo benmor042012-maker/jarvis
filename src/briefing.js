@@ -12,6 +12,7 @@
 import { runAgent } from "./agent.js";
 import { retrieveMemories, buildMemoryBlock } from "./memory.js";
 import { status as googleStatus } from "./google.js";
+import { hasDB, hasKey, MSG_NO_DB, MSG_NO_KEY, safeDB } from "./env_guard.js";
 
 const TZ = "Asia/Jerusalem";
 
@@ -37,15 +38,19 @@ function localDateKey(date = new Date()) {
 
 // Called by the cron every hour (see wrangler.toml). Fires once per local day.
 export async function maybeRunScheduledBriefing(env) {
+  if (!hasDB(env) || !hasKey(env)) return { skipped: "not_configured" };
   const hour = Number(env.BRIEFING_HOUR ?? 6);
   if (localHour() !== hour) return { skipped: "not_the_hour", local_hour: localHour() };
   const users = await briefingUsers(env);
   const out = [];
   for (const userId of users) {
     const today = localDateKey();
-    const exists = await env.DB.prepare(
-      `SELECT id FROM briefings WHERE user_id = ? AND day = ? LIMIT 1`
-    ).bind(userId, today).first();
+    const exists = await safeDB(
+      env,
+      () => env.DB.prepare(`SELECT id FROM briefings WHERE user_id = ? AND day = ? LIMIT 1`).bind(userId, today).first(),
+      null,
+      "briefing dedupe"
+    );
     if (exists) { out.push({ userId, skipped: "already_sent" }); continue; }
     out.push(await runBriefing(env, userId));
   }
@@ -56,15 +61,15 @@ export async function maybeRunScheduledBriefing(env) {
 async function briefingUsers(env) {
   const set = new Set();
   if (env.BRIEFING_USER_ID) set.add(env.BRIEFING_USER_ID);
-  try {
-    const rows = await env.DB.prepare(`SELECT user_id FROM google_tokens`).all();
-    for (const r of rows.results || []) set.add(r.user_id);
-  } catch {}
+  const rows = await safeDB(env, () => env.DB.prepare(`SELECT user_id FROM google_tokens`).all(), { results: [] }, "briefing users");
+  for (const r of rows.results || []) set.add(r.user_id);
   if (!set.size) set.add("effi");
   return [...set];
 }
 
 export async function runBriefing(env, userId, { deliver = true } = {}) {
+  if (!hasKey(env)) return { userId, ok: false, error: MSG_NO_KEY };
+  if (!hasDB(env)) return { userId, ok: false, error: MSG_NO_DB };
   const { core } = await retrieveMemories(env, userId, "בוקר, עיר מגורים, עבודה, לוח זמנים");
   const memoryBlock = buildMemoryBlock(core, []);
   const g = await googleStatus(env, userId);
@@ -89,10 +94,15 @@ export async function runBriefing(env, userId, { deliver = true } = {}) {
 
   const id = crypto.randomUUID();
   const drafts = toolTrace.filter((t) => t.tool === "gmail_create_draft" && t.output?.draft_created).length;
-  await env.DB.prepare(
-    `INSERT INTO briefings (id, user_id, day, text, drafts_created, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(id, userId, localDateKey(), text, drafts, Date.now()).run();
+  await safeDB(
+    env,
+    () => env.DB.prepare(
+      `INSERT INTO briefings (id, user_id, day, text, drafts_created, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(id, userId, localDateKey(), text, drafts, Date.now()).run(),
+    null,
+    "briefing insert"
+  );
 
   let telegram = null;
   if (deliver) telegram = await sendTelegram(env, text);
@@ -101,10 +111,11 @@ export async function runBriefing(env, userId, { deliver = true } = {}) {
 
 // Web page / desktop poll this and speak whatever hasn't been spoken yet.
 export async function latestBriefing(env, userId, { markSpoken = true } = {}) {
-  const row = await env.DB.prepare(
+  if (!hasDB(env)) return { briefing: null, not_configured: "d1" };
+  const row = await safeDB(env, () => env.DB.prepare(
     `SELECT id, day, text, drafts_created, created_at, spoken_at FROM briefings
      WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`
-  ).bind(userId).first();
+  ).bind(userId).first(), null, "latestBriefing");
   if (!row) return { briefing: null };
   const unspoken = !row.spoken_at;
   if (unspoken && markSpoken) {

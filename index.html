@@ -1184,18 +1184,36 @@
       const response = await fetch(PROXY_URL, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ messages: history })
+        body: JSON.stringify({ messages: history, userId: JARVIS_USER_ID })
       });
-      if(!response.ok) throw new Error('proxy '+response.status);
-      const data = await response.json();
-      const reply = (data.reply||'').trim() || 'לא הצלחתי לנסח תשובה כרגע.';
-      history.push({role:'assistant', content:reply});
-      addLog('assistant', reply);
-      speak(reply);
-    }catch(e){
-      const explain = 'זו לא פקודה מקומית שאני מכיר, ושיחה חופשית דורשת חיבור לשרת שעדיין לא קיים כאן. תגיד "מה אתה יכול לעשות" ואפרט מה כן עובד.';
+      const data = await response.json().catch(()=>({}));
+      const reply = (data.reply||'').trim();
+      if(reply){
+        history.push({role:'assistant', content:reply});
+        addLog('assistant', reply);
+        speak(reply);
+        return;
+      }
+      // No reply means something is misconfigured. Say exactly what, and where
+      // to look — never claim the server "doesn't exist", which sends the user
+      // hunting for the wrong problem.
+      history.pop();
+      let explain;
+      if(data.error){
+        explain = String(data.error);
+        if(data.setup_url) explain += ' פרטים: ' + data.setup_url;
+      } else if(!response.ok){
+        explain = 'השרת החזיר שגיאה ' + response.status + '. פתח את ' + PROXY_URL + '/setup ותראה מה חסר.';
+      } else {
+        explain = 'לא הצלחתי לנסח תשובה כרגע. נסה שוב.';
+      }
       addLog('assistant', explain);
-      speak(explain);
+      speak(explain.split(' פרטים:')[0]);
+    }catch(e){
+      history.pop();
+      const explain = 'לא הצלחתי להגיע לשרת של ג\'רביס. בדוק חיבור לאינטרנט, ואם זה נמשך פתח את ' + PROXY_URL + '/setup כדי לראות אם הוא חי.';
+      addLog('assistant', explain);
+      speak('לא הצלחתי להגיע לשרת.');
     }
   }
 
@@ -1310,15 +1328,32 @@
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ messages: history, userId: JARVIS_USER_ID, memory_command: text })
       });
-      const data = await response.json();
-      const reply = (data.reply||'').trim() || 'לא הצלחתי לנסח תשובה כרגע.';
+      const data = await response.json().catch(()=>({}));
+      let reply = (data.reply||'').trim();
+      if(!reply){
+        // Say what actually went wrong instead of a generic shrug. The Worker
+        // sends a Hebrew explanation plus a link to its own status page.
+        if(data.error){
+          reply = String(data.error);
+          if(data.setup_url) reply += ' פרטים: ' + data.setup_url;
+        } else if(!response.ok){
+          reply = 'השרת החזיר שגיאה ' + response.status + '. פתח את ' + PROXY_URL + '/setup כדי לראות מה חסר.';
+        } else {
+          reply = 'לא הצלחתי לנסח תשובה כרגע.';
+        }
+        history.pop(); // don't keep an unanswered turn in the context
+        addLog('assistant', reply);
+        speak(reply);
+        return;
+      }
       history.push({role:'assistant', content:reply});
       addLog('assistant', reply);
       speak(reply);
     }catch(e){
-      const explain = 'הבקאנד לא זמין רגע.';
+      history.pop();
+      const explain = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט, או פתח את ' + PROXY_URL + '/setup כדי לראות אם הוא חי.';
       addLog('assistant', explain);
-      speak(explain);
+      speak('לא הצלחתי להגיע לשרת.');
     }
   }
 
