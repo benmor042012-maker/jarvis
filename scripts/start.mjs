@@ -7,8 +7,9 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { WIN, runAsync } from "./spawn-compat.mjs";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WIN = process.platform === "win32";
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", y: "\x1b[33m", red: "\x1b[31m", c: "\x1b[36m" };
 const die = (m) => { console.log(`${C.red}✕${C.r} ${m}`); process.exit(1); };
 
@@ -56,7 +57,7 @@ function wire(child, canFallBack) {
 }
 
 if (useDesktop) {
-  const child = spawn(electron, ["."], { cwd: join(ROOT, "desktop"), stdio: "inherit", shell: WIN });
+  const child = runAsync(electron, ["."], { cwd: join(ROOT, "desktop"), stdio: "inherit" });
   child.on("error", () => { startHeadless("Electron could not be launched."); });
   wire(child, true);
 } else {
