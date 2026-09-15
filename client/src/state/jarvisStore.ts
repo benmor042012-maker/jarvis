@@ -315,10 +315,17 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   },
 }));
 
+function needsApproval(plan: Plan): boolean {
+  // Every command produces a plan event, including ones with nothing to run
+  // ("I didn't understand that"). Only a plan that actually has an action
+  // waiting on the user is an approval — otherwise the orb would sit on
+  // APPROVAL REQUIRED and the command bar would lock for no reason.
+  return (plan.status === "pending" || plan.status === "awaiting_local") && plan.requires_approval && plan.actions.some((a) => a.decision === "ask");
+}
+
 function upsert(list: Plan[], plan: Plan): Plan[] {
   const others = list.filter((p) => p.plan_id !== plan.plan_id);
-  if (plan.status === "pending" || plan.status === "awaiting_local") return [...others, plan];
-  return others;
+  return needsApproval(plan) ? [...others, plan] : others;
 }
 
 export function deriveOrb(): void {
@@ -489,7 +496,7 @@ function onEvent(ev: AgentEvent): void {
       const mine = ev.plan.device_id === s.creds?.id;
       const pending = upsert(s.pendingPlans, ev.plan);
       useJarvis.setState({ pendingPlans: pending });
-      if ((ev.plan.status === "pending" || ev.plan.status === "awaiting_local") && ev.plan.requires_approval && !mine && !s.pendingPlans.some((p) => p.plan_id === ev.plan.plan_id)) {
+      if (needsApproval(ev.plan) && !mine && !s.pendingPlans.some((p) => p.plan_id === ev.plan.plan_id)) {
         s.addLog("warn", `Approval requested by "${ev.plan.device_name ?? "another device"}": ${ev.plan.command}`);
       }
       if (ev.plan.status === "awaiting_local" && s.creds?.role === "owner") s.addLog("warn", "A remote device approved a high-risk plan. Confirm it in the dialog on this computer.");

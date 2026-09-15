@@ -92,6 +92,14 @@ export function CommandBar() {
           disabled={disabled}
           maxLength={4000}
         />
+        {!speech.supported && speech.unavailable && (
+          <button type="button" className="icon-btn" title={speech.unavailable} aria-label={`Voice input unavailable. ${speech.unavailable}`} onClick={() => { useJarvis.getState().addLog("system", speech.unavailable ?? ""); }} disabled={disabled}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" opacity="0.45">
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8M4 4l16 16" />
+            </svg>
+          </button>
+        )}
         {speech.supported && (
           <button
             type="button"

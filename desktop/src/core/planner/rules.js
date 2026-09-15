@@ -102,7 +102,23 @@ function rulePlan(input, ctx = {}) {
     return plan(he ? "יוצר קובץ יומן (.ics) — לא נוסף ליומן בלי שתפתח אותו." : "Creating a calendar file (.ics) — nothing is added to a calendar until you open it.", [{ tool: "create_calendar_draft", params: { title: q(m[1]), start_iso: m[2].replace(" ", "T") } }]);
   }
   if (/(draft|נסח|טיוטה).*(message|customer|client|whatsapp|הודעה|ללקוח|לקוח)/i.test(text)) return plan(he ? "טיוטות ללקוחות נמצאות בלוח 'טיוטות' — שם רואים נמען, מטרה, טקסט ותזמון. שום דבר לא נשלח." : "Customer messages are drafted in the Drafts panel, which shows recipient, purpose, text and timing. Nothing is sent.", [], { suggest: "drafts" });
-  if (/^(build|create|make|generate|בנה|תבנה|צור לי|תיצור לי)\b.*(website|web site|site|app|application|api|backend|installer|אתר|אפליקציה|אפליקצית|שרת|התקנה)/i.test(text)) return plan(he ? "פרויקטים נבנים בבונה הפרויקטים: שם רואים את התוכנית, הקבצים והכלים לפני אישור." : "Projects are built in the Project Builder, where you see the plan, files and tools before approving.", [], { suggest: "projects" });
+
+  // "Build me a website for an Italian restaurant" is a project, not a single
+  // action. Hebrew puts the verb in many forms (תעשה / תבנה / תכין / אני רוצה),
+  // and \b does not work around Hebrew letters — \w is ASCII only — so Hebrew
+  // words get explicit lookaround boundaries instead.
+  const he_ = (...words) => `(?<![\u0590-\u05FF])(?:${words.join("|")})(?![\u0590-\u05FF])`;
+  const WANTS = new RegExp(`\\b(?:build|create|make|generate|design|develop|code|set up|i want|i need)\\b|${he_("תעשה", "עשה", "תבנה", "בנה", "תכין", "הכן", "תיצור", "צור", "תעצב", "עצב", "אני רוצה", "אני צריך", "תכתוב לי", "תפתח לי")}`, "i");
+  const PROJECT_THING = new RegExp(`\\b(?:websites?|web ?sites?|web ?pages?|landing pages?|web ?apps?|apps?|applications?|mobile apps?|apis?|backends?|installers?|pwa)\\b|${he_("אתר", "אתרים", "דף נחיתה", "אפליקציה", "אפליקציית", "אפליקציות", "תוכנה", "ממשק", "מערכת", "קובץ התקנה")}`, "i");
+  if (WANTS.test(text) && PROJECT_THING.test(text)) {
+    return plan(
+      he
+        ? "זה פרויקט, לא פעולה בודדת — פתחתי לך את בונה הפרויקטים. שם בוחרים סוג (אתר / אפליקציה / API), כותבים מה צריך, ורואים את התוכנית, הקבצים והפקודות לפני שמאשרים."
+        : "That is a project, not a single action — I opened the Project Builder. Pick a type (website / app / API), describe what you need, and review the plan, files and commands before approving.",
+      [],
+      { suggest: "projects" },
+    );
+  }
 
   // Open: url / app / file
   if ((m = text.match(/^(?:open|launch|start|go to|visit|פתח|תפתח|הפעל|תפעיל|היכנס ל|גש ל)\s+(?:the\s+|את\s+)?(.+)$/i))) {

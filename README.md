@@ -140,6 +140,9 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- Voice input does **not** work inside the JARVIS window: stock Electron ships without a speech
+  recognition service. The mic button there is disabled and says so. Open the same page
+  (`http://127.0.0.1:8765`) in Chrome or Edge to talk to JARVIS — Hebrew recognition works there.
 - Headless mode cannot show the native second confirmation, so high-risk plans approved remotely
   are refused there rather than run unconfirmed.
 - Local models are smaller than hosted assistants: they can misunderstand and are slower. Every plan
