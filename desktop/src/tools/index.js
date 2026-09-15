@@ -3,9 +3,10 @@ const memory = require("./memory-remote");
 const reminders = require("./reminders-remote");
 const computer = require("./computer");
 const messaging = require("./messaging");
+const google = require("./google-remote");
 const contacts = require("../contacts");
 
-const modules = [web, memory, reminders, computer, messaging, contacts];
+const modules = [web, memory, reminders, computer, messaging, google, contacts];
 
 function definitions() {
   const all = [];

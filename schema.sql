@@ -31,3 +31,35 @@ CREATE TABLE IF NOT EXISTS reminders (
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(status, fire_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_user    ON reminders(user_id, status);
+
+-- Google OAuth refresh tokens (one per user). Access tokens are minted on demand.
+CREATE TABLE IF NOT EXISTS google_tokens (
+  user_id       TEXT PRIMARY KEY,
+  refresh_token TEXT NOT NULL,
+  email         TEXT,
+  scopes        TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
+-- Morning briefings ("Jarvis calls you at 6:00"). One per user per local day.
+CREATE TABLE IF NOT EXISTS briefings (
+  id             TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL,
+  day            TEXT NOT NULL,               -- YYYY-MM-DD, Asia/Jerusalem
+  text           TEXT NOT NULL,
+  drafts_created INTEGER DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  spoken_at      INTEGER                      -- set when web/desktop read it aloud
+);
+CREATE INDEX IF NOT EXISTS idx_briefings_user_day ON briefings(user_id, day);
+
+-- Short conversation history for the Telegram bot.
+CREATE TABLE IF NOT EXISTS telegram_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT NOT NULL,
+  role       TEXT NOT NULL,                   -- user | assistant
+  content    TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tg_chat ON telegram_history(chat_id, created_at);

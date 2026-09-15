@@ -1,4 +1,9 @@
 // ============================================================
+//  LEGACY: this standalone bot has no tools/memory. The main Worker
+//  (src/index.js) now serves Telegram at /telegram/webhook with the full
+//  agent (memory, reminders, calendar, gmail, morning briefing).
+//  See SETUP-GOOGLE.md section 5. Kept for reference only.
+//
 //  JARVIS on Telegram - Cloudflare Worker (webhook bot) + self-check
 //  Secrets: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY   Optional: OWNER_ID
 //  After deploy, just open the Worker URL in a browser to see a full

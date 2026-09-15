@@ -1251,6 +1251,45 @@
   setTimeout(pollBackendReminders, 8000);
   setInterval(pollBackendReminders, 45000);
 
+  // ---------- morning briefing ("ג'רביס מתקשר ב-6 בבוקר") ----------
+  // The Worker prepares a briefing every morning (mail triage + drafts,
+  // calendar, reminders, weather). If this tab is open, JARVIS reads it aloud
+  // once. It is also sent to Telegram, so nothing is lost if the tab is closed.
+  async function pollMorningBriefing(){
+    try{
+      const r = await fetch(PROXY_URL + '/briefing/latest?userId=' + encodeURIComponent(JARVIS_USER_ID));
+      if(!r.ok) return;
+      const data = await r.json();
+      if(data && data.briefing && data.unspoken){
+        addLog('assistant', data.briefing.text);
+        beep();
+        document.documentElement.style.setProperty('--ring-color','#4cc9ff');
+        speak(data.briefing.text);
+        setTimeout(()=>document.documentElement.style.removeProperty('--ring-color'), 15000);
+      }
+    }catch(e){/* silent */}
+  }
+  setTimeout(pollMorningBriefing, 12000);
+  setInterval(pollMorningBriefing, 120000);
+
+  // "ג'רביס, תדריך בוקר" — run it on demand.
+  async function runBriefingNow(){
+    addLog('assistant', 'רגע, אני אוסף את המיילים, היומן והתזכורות.');
+    try{
+      const r = await fetch(PROXY_URL + '/briefing/run', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ userId: JARVIS_USER_ID }) });
+      const data = await r.json();
+      if(data && data.ok){
+        // mark as spoken so the poller doesn't repeat it
+        fetch(PROXY_URL + '/briefing/latest?userId=' + encodeURIComponent(JARVIS_USER_ID)).catch(()=>{});
+        addLog('assistant', data.text); speak(data.text);
+      } else {
+        const msg = 'לא הצלחתי להכין תדריך: ' + ((data && data.error) || r.status);
+        addLog('assistant', msg); speak(msg);
+      }
+    }catch(e){ const msg='השרת לא זמין כרגע.'; addLog('assistant', msg); speak(msg); }
+  }
+  const BRIEFING_RE = /^(?:ג'רביס\s+)?(?:תדריך(?:\s+בוקר)?|מה\s+חדש\s+הבוקר|תעדכן\s+אותי\s+על\s+הבוקר)\.?$/i;
+
   // ---------- explicit memory commands ----------
   // "תזכור ש..." → send to backend as a memory_write. The Claude tool loop
   // does the actual write server-side, but we also intercept locally so it
@@ -1261,6 +1300,7 @@
   const FORGET_RE = /^(?:ג'רביס\s+)?תשכח\s+(.+)$/i;
 
   async function jarvisChat(text){
+    if(BRIEFING_RE.test(text.trim())){ addLog('user', text); return runBriefingNow(); }
     addLog('user', text);
     history.push({role:'user', content:text});
     setState('thinking');

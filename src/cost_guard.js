@@ -62,9 +62,15 @@ export function costReport(env) {
     },
     {
       name: "Gmail / Google Calendar",
-      status: "לא מחובר (דורש OAuth ידני)",
+      status: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? "מוגדר (חיבור חשבון דרך /google/auth)" : "לא מוגדר (חסרים GOOGLE_CLIENT_ID/SECRET)",
       paid: false,
-      note: "חינם אחרי הגדרת OAuth. פתוח לתוסף עתידי.",
+      note: "חינם. OAuth פעם אחת, אחר כך JARVIS קורא מיילים, מנסח טיוטות ומנהל את היומן.",
+    },
+    {
+      name: "Telegram Bot (תדריך בוקר + צ'אט)",
+      status: env.TELEGRAM_BOT_TOKEN ? (env.OWNER_ID ? "מחובר ונעול לבעלים" : "מחובר (OWNER_ID חסר)") : "לא מחובר",
+      paid: false,
+      note: "חינם. תדריך הבוקר נשלח לכאן כל יום בשעה " + (env.BRIEFING_HOUR ?? 6) + ":00.",
     },
   ];
 
