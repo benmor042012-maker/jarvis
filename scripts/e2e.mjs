@@ -160,7 +160,8 @@ try {
   await page.getByRole("button", { name: /Allow microphone/ }).click();
   await until("the agent to know the microphone is open", () => agent.voice.micGranted === true);
   check("the microphone is open only after allowing it", true);
-  check("the page shows it is listening", await page.isVisible(".mic-dot"));
+  await until("the page to show a live microphone", () => page.isVisible(".mic-dot"));
+  check("the page shows it is listening", true);
 
   // 3. A recording actually reaches the agent (this is the whole capture path:
   //    AudioWorklet → voice detector → WAV → upload → local engine).
@@ -172,13 +173,17 @@ try {
   say("תתעורר");
   await until("the wake phrase", () => agent.voice.stats.wakes >= 1, 25000);
   check("the wake phrase wakes JARVIS", agent.voice.listeningUntil > Date.now());
-  check("the interface shows LISTENING", await page.isVisible("text=LISTENING"));
+  await until("the page to show LISTENING", () => page.isVisible("text=LISTENING"));
+  check("the interface shows LISTENING", true);
 
   // 5. A spoken command goes through the normal plan → execute path.
   say("מה השעה");
   const plan = await until("the command to be planned", () => agent.voice.stats.commands >= 1, 25000);
   check("a spoken command is planned and answered", !!plan);
-  check("the transcript is in the activity log", await page.isVisible("text=מה השעה"));
+  // The agent counts the command as soon as it starts planning; the page only
+  // writes the log line when the upload's answer comes back. Wait for the page.
+  await until("the transcript to appear in the log", () => page.isVisible("text=מה השעה"));
+  check("the transcript is in the activity log", true);
 
   // 6. A stop phrase stops everything, without a model.
   say("עצור");
@@ -187,7 +192,8 @@ try {
   check("the stop names what stopped it", /voice/.test(agent.status().emergency_source || ""), String(agent.status().emergency_source));
   check("the page was told which source stopped it", !(await page.isVisible("text=source: unknown")));
   check("stopping needed no model", agent.voice.history.some((h) => h.kind === "stop"));
-  check("the interface shows the emergency state", await page.isVisible("text=EMERGENCY STOPPED"));
+  await until("the page to show the emergency state", () => page.isVisible("text=EMERGENCY STOPPED"));
+  check("the interface shows the emergency state", true);
   agent.clearEmergency({ name: "e2e" });
   await until("the emergency state to clear in the page", async () => !(await page.isVisible("text=EMERGENCY STOPPED")));
 
@@ -210,7 +216,8 @@ try {
   await until("listening again", () => agent.voice.paused === false);
   await page.getByRole("button", { name: "Microphone off", exact: true }).click();
   await until("the microphone to close", () => agent.voice.micGranted === false);
-  check("the microphone can be closed from the page", await page.isVisible("text=MICROPHONE OFF"));
+  await until("the page to show the microphone closed", () => page.isVisible("text=MICROPHONE OFF"));
+  check("the microphone can be closed from the page", true);
 
   // 9. An urgent customer raises an alert, and it reaches a paired phone on the
   //    same network — over the connection that phone already holds open.
