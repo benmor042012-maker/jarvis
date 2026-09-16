@@ -40,6 +40,28 @@ jobs:
       - name: Verify (self-contained scan, agent tests, typecheck, lint, build)
         run: npm run verify
 
+  browser:
+    # The voice interface can only really be proven in a browser: the page has
+    # to open a microphone, cut what it hears into recordings and upload them.
+    # Chromium plays a fixed WAV into a fake microphone, and a stub stands in
+    # for the speech engine, which no build machine can be assumed to have.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install the interface
+        run: npm --prefix client ci --no-audit --no-fund
+      - name: Build the interface
+        run: npm run build
+      - name: Install Chromium
+        run: npm i --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Voice, alerts and calls in a real browser
+        run: npm run e2e
+
   windows-smoke:
     # The launchers exist for Windows, so they are exercised on Windows.
     runs-on: windows-latest

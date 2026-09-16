@@ -266,3 +266,176 @@ test("static fallback page when UI is not built", async () => {
   assert.equal(r.status, 200);
   assert.match(await r.text(), /JARVIS agent is running/);
 });
+
+test("voice, alert and phone routes are reachable and honest over HTTP", async () => {
+  const v = await ownerClient.call("voice/status", { force: true });
+  assert.equal(v.status, 200);
+  assert.equal(v.body.engine.available, false, "no speech engine is installed on CI");
+  assert.ok(v.body.engine.install.windows.length >= 3, "it must say exactly how to install one");
+  assert.deepEqual(v.body.wakePhrases, ["תתעורר", "hey jarvis"]);
+
+  // Audio upload needs its own short-lived token and refuses without one.
+  const noToken = await fetch(base + "/api/voice/utterance", { method: "POST", body: Buffer.alloc(100) });
+  assert.equal(noToken.status, 401);
+  const tok = (await ownerClient.call("voice/upload-token")).body.token;
+  const notWav = await fetch(base + "/api/voice/utterance?token=" + tok, { method: "POST", body: Buffer.alloc(100) });
+  assert.equal(notWav.status, 400, "a body that is not a recording is a bad request");
+
+  // A real recording, with the microphone granted, reaches the engine check —
+  // which reports exactly what is missing instead of inventing a transcript.
+  await ownerClient.call("voice/microphone", { granted: true });
+  const tok2 = (await ownerClient.call("voice/upload-token")).body.token;
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0, "ascii");
+  head.write("WAVEfmt ", 8, "ascii");
+  head.write("data", 36, "ascii");
+  const realWav = Buffer.concat([head, Buffer.alloc(3200)]);
+  const noEngine = await fetch(base + "/api/voice/utterance?token=" + tok2 + "&ms=900", { method: "POST", body: realWav });
+  assert.equal(noEngine.status, 503, "no engine installed, and it says so rather than guessing");
+  const body = await noEngine.json();
+  assert.ok(body.install, "the error carries the exact free install steps");
+  assert.equal(body.error, "speech_engine_missing");
+  await ownerClient.call("voice/microphone", { granted: false });
+
+  const mic = await remoteClient.call("voice/microphone", { granted: true });
+  assert.equal(mic.status, 403, "only the computer itself may grant the microphone");
+
+  const cust = await ownerClient.call("customers/save", { customer: { name: "בדיקה", lastMessage: "דחוף מאוד" } });
+  assert.equal(cust.status, 200);
+  assert.ok(cust.body.customer.urgent);
+  const scan = await ownerClient.call("alerts/scan");
+  assert.equal(scan.body.raised.length, 1);
+  const alerts = await remoteClient.call("alerts/list");
+  assert.equal(alerts.body.alerts.length, 1);
+  assert.equal(alerts.body.label, "LOCAL WI-FI ALERTS — NO EXTERNAL MESSAGES");
+  const ack = await remoteClient.call("alerts/acknowledge", { id: alerts.body.alerts[0].id });
+  assert.equal(ack.body.alert.status, "acknowledged");
+
+  const caps = await remoteClient.call("phone/capabilities");
+  assert.equal(caps.body.capabilities.answer_incoming_call.available, false);
+  assert.equal(caps.body.answering_enabled, false);
+  const answer = await ownerClient.call("phone/answer");
+  assert.equal(answer.status, 501, "answering is refused, not faked");
+
+  // Simulation, asked for explicitly: the workflow runs end to end and says so.
+  const sim = await ownerClient.call("phone/request", { to: "050-123-4567", reason: "בדיקה", simulate: true });
+  assert.equal(sim.status, 200);
+  assert.equal(sim.body.call.simulation, true);
+  const simDone = await ownerClient.call("phone/decide", { id: sim.body.call.id, decision: "approve", hash: sim.body.call.hash });
+  assert.equal(simDone.body.call.status, "simulated");
+  assert.equal(simDone.body.call.outcome, "simulated");
+  assert.match(simDone.body.call.outcome_note, /no number was dialled/i);
+
+  // A real request, approved: it reaches "approved" and stops there. Approval
+  // is not a call, and nothing claims one was placed.
+  const real = await ownerClient.call("phone/request", { to: "050-765-4321", reason: "בדיקה" });
+  const realDone = await ownerClient.call("phone/decide", { id: real.body.call.id, decision: "approve", hash: real.body.call.hash });
+  assert.ok(["approved", "simulated"].includes(realDone.body.call.status));
+  if (realDone.body.call.status === "approved") {
+    assert.equal(realDone.body.call.outcome, null, "approval alone must not set an outcome");
+    assert.equal(realDone.body.call.dialer_opened_at, null);
+  }
+  const bad = await ownerClient.call("phone/decide", { id: real.body.call.id, decision: "approve", hash: "tampered" });
+  assert.equal(bad.status, 409, "already decided");
+});
+
+test("the emergency stop also stops voice listening and any call in flight", async () => {
+  const call = await ownerClient.call("phone/request", { to: "0501110000", reason: "x" });
+  agent.voice.setMicGranted(true);
+  agent.voice.listeningUntil = Date.now() + 60000;
+  const stop = await ownerClient.call("emergency-stop");
+  assert.equal(stop.status, 200);
+  assert.ok(stop.body.stopped.stopped_calls >= 1);
+  assert.equal(agent.voice.listeningUntil, 0);
+  assert.equal((await ownerClient.call("phone/list")).body.calls.find((c) => c.id === call.body.call.id).status, "stopped");
+  await ownerClient.call("emergency-clear");
+});
+
+/** Opens the local event stream for a device and collects the events it sends. */
+async function openEvents(c) {
+  const http = require("http");
+  const { token } = (await c.call("events/token")).body;
+  const u = new URL(base);
+  const events = [];
+  const req = http.get({ host: u.hostname, port: u.port, path: `/api/events?token=${token}` });
+  const res = await new Promise((resolve, reject) => { req.on("response", resolve); req.on("error", reject); });
+  let buf = "";
+  res.setEncoding("utf8");
+  res.on("data", (chunk) => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const data = /^data: (.*)$/m.exec(frame);
+      if (data) { try { events.push(JSON.parse(data[1])); } catch { /* ping */ } }
+    }
+  });
+  return { events, close: () => { req.destroy(); res.destroy(); } };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 120));
+
+test("an alert reaches paired phones over the local stream, and only when that channel is on", async () => {
+  await ownerClient.call("settings/update", { settings: { alerts: { enabled: true, scanIntervalMs: 60000, channels: { notification: false, sound: false, speech: false, phone: true }, speakDetails: false, quietHours: { enabled: false, start: "23:00", end: "07:00" } } } });
+  const c = await ownerClient.call("customers/save", { customer: { name: "אלמוג", lastMessage: "זה דחוף מאוד" } });
+  const ownerStream = await openEvents(ownerClient);
+  const phoneStream = await openEvents(remoteClient);
+  await settle();
+
+  assert.equal(agent.server.connectedRemotes(), 1, "the paired phone is counted as connected");
+  const raised = await ownerClient.call("alerts/raise", { customer_id: c.body.customer.id, headline: "צריך תשובה" });
+  await settle();
+  const seenByPhone = phoneStream.events.filter((e) => e.type === "alert" && e.alert.id === raised.body.alert.id);
+  assert.equal(seenByPhone.length, 1, "the phone receives the alert on the stream it already holds open");
+  assert.equal(seenByPhone[0].alert.label, "LOCAL WI-FI ALERTS — NO EXTERNAL MESSAGES");
+  assert.ok(ownerStream.events.some((e) => e.type === "alert"), "and so does this computer");
+  // The record counts the phones that were actually connected — nothing is
+  // "sent" anywhere else, so there is nothing else to count.
+  assert.equal(agent.alerts.list().find((a) => a.id === raised.body.alert.id).delivered.phone, 1);
+
+  // Turning the phone channel off must actually stop it reaching the phone.
+  await ownerClient.call("settings/update", { settings: { alerts: { enabled: true, scanIntervalMs: 60000, channels: { notification: false, sound: false, speech: false, phone: false }, speakDetails: false, quietHours: { enabled: false, start: "23:00", end: "07:00" } } } });
+  const second = await ownerClient.call("alerts/raise", { customer_id: c.body.customer.id, headline: "עוד פעם" });
+  await settle();
+  assert.ok(!phoneStream.events.some((e) => e.type === "alert" && e.alert.id === second.body.alert.id), "the phone must not receive it when the channel is off");
+  assert.ok(ownerStream.events.some((e) => e.type === "alert" && e.alert.id === second.body.alert.id), "this computer still sees it");
+  assert.equal(agent.alerts.list().find((a) => a.id === second.body.alert.id).delivered.phone, 0);
+
+  ownerStream.close();
+  phoneStream.close();
+  await settle();
+  assert.equal(agent.server.connectedRemotes(), 0);
+});
+
+test("every setting the interface can edit actually saves", async () => {
+  // A settings screen that silently drops a section is worse than not having
+  // it: the switch moves, nothing changes, and nothing says so. Every group in
+  // the config is either editable or listed here as deliberately not.
+  const config = require("../src/core/config");
+  const NOT_EDITABLE = ["version"]; // bumped by migrations, never by a person
+  // "server" is editable too, but changing its port or LAN flag restarts the
+  // listener out from under this test, so it is checked without a change.
+  const groups = Object.keys(config.load()).filter((k) => !NOT_EDITABLE.includes(k) && k !== "server");
+  const sameServer = await ownerClient.call("settings/update", { settings: { server: config.load().server } });
+  assert.equal(sameServer.status, 200, "server settings were rejected");
+  for (const group of groups) {
+    const before = JSON.parse(JSON.stringify(config.load()[group]));
+    const probe = group === "language" ? (before === "he" ? "en" : "he") : typeof before === "object" && !Array.isArray(before) ? { ...before } : before;
+    if (typeof probe === "object" && probe !== null && !Array.isArray(probe)) {
+      // Flip the first boolean in the group; if it has none, skip the flip and
+      // simply require that the group survives the round trip.
+      const key = Object.keys(probe).find((k) => typeof probe[k] === "boolean");
+      if (key) probe[key] = !probe[key];
+      const r = await ownerClient.call("settings/update", { settings: { [group]: probe } });
+      assert.equal(r.status, 200, `${group} was rejected`);
+      if (key) assert.equal(config.load()[group][key], probe[key], `${group}.${key} did not save`);
+      await ownerClient.call("settings/update", { settings: { [group]: before } });
+    } else {
+      const r = await ownerClient.call("settings/update", { settings: { [group]: probe } });
+      assert.equal(r.status, 200, `${group} was rejected`);
+      assert.deepEqual(config.load()[group], probe, `${group} did not save`);
+      await ownerClient.call("settings/update", { settings: { [group]: before } });
+    }
+  }
+});

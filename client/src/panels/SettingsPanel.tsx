@@ -41,6 +41,10 @@ export function SettingsPanel() {
   const v = <K extends keyof SettingsUpdate>(k: K): Settings[K] => (form[k] as Settings[K] | undefined) ?? settings[k];
   const ai = { ...settings.ai, ...(form.ai ?? {}) };
   const server = { ...settings.server, ...(form.server ?? {}) };
+  const voice = { ...settings.voice, ...(form.voice ?? {}) };
+  const alerts = { ...settings.alerts, ...(form.alerts ?? {}) };
+  const phone = { ...settings.phone, ...(form.phone ?? {}) };
+  const lines = (text: string) => text.split("\n").map((s2) => s2.trim()).filter(Boolean);
 
   return (
     <Dialog title="Settings" onClose={() => { setPanel(null); }} wide>
@@ -167,6 +171,134 @@ export function SettingsPanel() {
               />
               <span className="help">Built-in apps available here: {apps.filter((a) => a.available).map((a) => a.id).join(", ") || "—"}</span>
             </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="span-2" disabled={!isOwner}>
+          <legend>Voice</legend>
+          <div className="settings-grid">
+            <label className="check span-2">
+              <input type="checkbox" checked={voice.enabled} onChange={(e) => { setForm({ ...form, voice: { ...voice, enabled: e.target.checked } }); }} />
+              Let JARVIS listen for the wake phrase
+            </label>
+            <label className="field">
+              <span>Wake phrases (one per line)</span>
+              <textarea rows={2} value={voice.wakePhrases.join("\n")} onChange={(e) => { setForm({ ...form, voice: { ...voice, wakePhrases: lines(e.target.value) } }); }} />
+            </label>
+            <label className="field">
+              <span>Stop phrases (stop everything, no model involved)</span>
+              <textarea rows={2} value={voice.stopPhrases.join("\n")} onChange={(e) => { setForm({ ...form, voice: { ...voice, stopPhrases: lines(e.target.value) } }); }} />
+            </label>
+            <label className="field">
+              <span>Speech language</span>
+              <input value={voice.language} onChange={(e) => { setForm({ ...form, voice: { ...voice, language: e.target.value } }); }} placeholder="he" />
+            </label>
+            <label className="field">
+              <span>Maximum listening time after waking (seconds)</span>
+              <input type="number" min={2} max={120} value={Math.round(voice.maxListenMs / 1000)} onChange={(e) => { setForm({ ...form, voice: { ...voice, maxListenMs: Number(e.target.value) * 1000 } }); }} />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={voice.quietHours.enabled} onChange={(e) => { setForm({ ...form, voice: { ...voice, quietHours: { ...voice.quietHours, enabled: e.target.checked } } }); }} />
+              Quiet hours
+            </label>
+            <div className="field-row">
+              <label className="field">
+                <span>From</span>
+                <input type="time" value={voice.quietHours.start} onChange={(e) => { setForm({ ...form, voice: { ...voice, quietHours: { ...voice.quietHours, start: e.target.value } } }); }} />
+              </label>
+              <label className="field">
+                <span>To</span>
+                <input type="time" value={voice.quietHours.end} onChange={(e) => { setForm({ ...form, voice: { ...voice, quietHours: { ...voice.quietHours, end: e.target.value } } }); }} />
+              </label>
+            </div>
+            <label className="check">
+              <input type="checkbox" checked={voice.speakReplies} onChange={(e) => { setForm({ ...form, voice: { ...voice, speakReplies: e.target.checked } }); }} />
+              Speak the reply after a voice command
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={voice.keepAudio} onChange={(e) => { setForm({ ...form, voice: { ...voice, keepAudio: e.target.checked } }); }} />
+              Keep the recordings on this computer (off by default — JARVIS deletes each temporary WAV right after transcribing it)
+            </label>
+            <label className="field">
+              <span>whisper.cpp program (blank = look in the usual places)</span>
+              <input value={voice.whisperPath} onChange={(e) => { setForm({ ...form, voice: { ...voice, whisperPath: e.target.value } }); }} placeholder="C:\\whisper\\whisper-cli.exe" />
+            </label>
+            <label className="field">
+              <span>whisper.cpp model file</span>
+              <input value={voice.whisperModel} onChange={(e) => { setForm({ ...form, voice: { ...voice, whisperModel: e.target.value } }); }} placeholder="C:\\whisper\\ggml-small.bin" />
+            </label>
+            <p className="help span-2">Speech is recognised by a program installed on this computer. No audio is uploaded anywhere, and there is no speech service, account or key.</p>
+          </div>
+        </fieldset>
+
+        <fieldset className="span-2" disabled={!isOwner}>
+          <legend>Customer alerts</legend>
+          <div className="settings-grid">
+            <label className="check span-2">
+              <input type="checkbox" checked={alerts.enabled} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, enabled: e.target.checked } }); }} />
+              Watch the local customer records and alert me when one turns urgent
+            </label>
+            <label className="field">
+              <span>Check every (minutes)</span>
+              <input type="number" min={1} max={60} value={Math.round(alerts.scanIntervalMs / 60000)} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, scanIntervalMs: Number(e.target.value) * 60000 } }); }} />
+            </label>
+            <div className="field span-2">
+              <span>How to alert me</span>
+              <label className="check">
+                <input type="checkbox" checked={alerts.channels.notification} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, channels: { ...alerts.channels, notification: e.target.checked } } }); }} />
+                Windows notification
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={alerts.channels.sound} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, channels: { ...alerts.channels, sound: e.target.checked } } }); }} />
+                Sound
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={alerts.channels.speech} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, channels: { ...alerts.channels, speech: e.target.checked } } }); }} />
+                Say it out loud
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={alerts.channels.phone} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, channels: { ...alerts.channels, phone: e.target.checked } } }); }} />
+                Paired phones on this Wi-Fi
+              </label>
+            </div>
+            <label className="check span-2">
+              <input type="checkbox" checked={alerts.speakDetails} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, speakDetails: e.target.checked } }); }} />
+              Also say the reason out loud (off by default — private customer detail stays on screen)
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={alerts.quietHours.enabled} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, quietHours: { ...alerts.quietHours, enabled: e.target.checked } } }); }} />
+              Quiet hours (the alert still appears, it just makes no noise)
+            </label>
+            <div className="field-row">
+              <label className="field">
+                <span>From</span>
+                <input type="time" value={alerts.quietHours.start} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, quietHours: { ...alerts.quietHours, start: e.target.value } } }); }} />
+              </label>
+              <label className="field">
+                <span>To</span>
+                <input type="time" value={alerts.quietHours.end} onChange={(e) => { setForm({ ...form, alerts: { ...alerts, quietHours: { ...alerts.quietHours, end: e.target.value } } }); }} />
+              </label>
+            </div>
+            <p className="help span-2">LOCAL WI-FI ALERTS — NO EXTERNAL MESSAGES. Alerts reach this screen, this computer and paired phones on your own network. No Telegram, WhatsApp, SMS, email, Firebase or push service is used.</p>
+          </div>
+        </fieldset>
+
+        <fieldset className="span-2" disabled={!isOwner}>
+          <legend>Phone calls</legend>
+          <div className="settings-grid">
+            <label className="check span-2">
+              <input type="checkbox" checked={phone.enabled} onChange={(e) => { setForm({ ...form, phone: { ...phone, enabled: e.target.checked } }); }} />
+              Allow JARVIS to ask to call a customer (you still approve every number, and your phone still places the call)
+            </label>
+            <label className="check span-2">
+              <input type="checkbox" checked={phone.simulation} onChange={(e) => { setForm({ ...form, phone: { ...phone, simulation: e.target.checked } }); }} />
+              Simulation only — run the whole flow without ever opening a dialer
+            </label>
+            <label className="check span-2">
+              <input type="checkbox" checked={phone.allowDialer} onChange={(e) => { setForm({ ...form, phone: { ...phone, allowDialer: e.target.checked } }); }} />
+              Let an approved call open the dialer on a paired phone
+            </label>
+            <p className="help span-2">JARVIS cannot answer an incoming call and cannot press the call button for you. Those need an installed Android app with the ANSWER_PHONE_CALLS permission, which this project does not ship — see the Phone panel for the exact reason.</p>
           </div>
         </fieldset>
 

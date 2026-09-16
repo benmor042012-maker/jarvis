@@ -83,6 +83,28 @@ publishes or uploads: that stays yours to do.
 and translation, opt-out list, duplicate prevention and rate-limit simulation.
 Labelled **DRAFT ONLY — NOTHING IS SENT**, because there is no sending code in the product at all.
 
+**Voice** — JARVIS is controlled by voice; the keyboard is a fallback you open deliberately.
+The page records through an AudioWorklet, cuts what it hears into utterances with a local
+voice detector, and posts them to the agent, which transcribes them with a speech engine
+**installed on your computer** (whisper.cpp, or Vosk when its optional binding is present).
+Say **"תתעורר"** to wake it, then your command. Say **"עצור"**, **"תעצור"** or **"חירום"**
+to stop everything — those are matched on the transcript, so they work with no AI model at all.
+Quiet hours, a maximum listening time, false-wake protection and configurable phrases are in
+Settings → Voice. No audio is uploaded anywhere and none is kept: the agent writes one temporary
+WAV for the engine and deletes it immediately unless you switch "keep recordings" on.
+
+**Customer alerts** — customer records on your computer are scored by fixed rules (urgent
+wording, complaints, missed deadlines, days without an answer, and what you marked as a
+priority), so alerting works with no model installed and in offline mode. An alert reaches the
+screen, a Windows notification, a local sound, speech, and any paired phone on your Wi-Fi that
+has the JARVIS page open. Only the customer's **name** is said out loud; the reason and the
+record stay on screen. Everything is labelled **LOCAL WI-FI ALERTS — NO EXTERNAL MESSAGES**.
+
+**Phone calls** — after you approve the exact number on screen, a paired phone opens its dialer
+with the number filled in and **you** press call. That is the whole mechanism, and the Phone
+panel lists what is and is not possible, one line each, with the reason. See
+[Calling, honestly](#calling-honestly).
+
 ## Security model
 
 Every command from any device carries a signed envelope:
@@ -112,9 +134,25 @@ return `completed`, `partial`, `failed`, `cancelled`, `denied`, `expired` or `of
 
 Enable LAN access in Settings, then **Devices → Pair a new device**: the computer shows an 8-digit
 single-use code (and a QR) that expires in 5 minutes. From the phone you can see status, send
-commands, approve plans, read the redacted log and revoke the device. When the computer is off,
+commands, approve plans, receive customer alerts, approve a call and open the dialer, read the
+redacted log and revoke the device. When the computer is off,
 asleep, disconnected or the agent is stopped, the phone says exactly that — it never shows a fake
 connected state.
+
+## Calling, honestly
+
+| Can JARVIS… | Answer | Why |
+| --- | --- | --- |
+| Place a call from the computer | **No** | A PC has no cellular modem. Placing a call would need a telephony or VoIP provider, which costs money and sends your call through someone else's servers. |
+| Open the dialer on your phone, number ready | **Yes** | The approved number is sent to the paired phone over your own Wi-Fi and opened as a `tel:` link. |
+| Press the call button for you | **No** | A web page may open the dialer, but Android never lets it press call. Doing it for you would need an installed Android app. |
+| Know whether the call connected | **No** | Android does not tell a web page what happened after the dialer opens. JARVIS records what **you** tell it, and there is no "connected" state anywhere in the code. |
+| Answer an incoming call | **No** | Answering needs the `ANSWER_PHONE_CALLS` permission (Android 8+) in an installed, user-approved app. This project ships no Android app, so the request is refused with that reason instead of pretending. |
+| Record call audio | **No** | Not recorded, not stored, not by default and not at all. |
+
+Simulation mode runs the whole flow — request, approval screen, outcome, notes, a draft reply —
+without ever opening a dialer, and every screen says SIMULATION. Nothing here uses WhatsApp,
+Telegram, SMS or email.
 
 ## Commands
 
@@ -125,6 +163,7 @@ npm start               # desktop agent (or headless if Electron is missing)
 npm run headless        # agent without a window (Linux/servers/CI)
 npm test                # agent test suite
 npm run verify          # tests + lint + typecheck + build + self-contained scan
+npm run e2e             # the interface in a real browser (needs Playwright; skips without it)
 npm run build:installer # Windows installer into desktop/dist
 ```
 
@@ -139,8 +178,15 @@ npm run build:installer # Windows installer into desktop/dist
   drafts/         customer drafts, .eml and .ics files
   logs/           redacted audit log, one file per day
   trash/          what "delete" actually does
-  temp/           screenshots
+  temp/           screenshots (and one WAV at a time while it is being transcribed)
+  customers.json  customer records, used only to decide what is urgent
+  alerts.json     alerts raised, acknowledged and resolved
+  speech/         where JARVIS looks for a local speech engine and its model
 ```
+
+Voice transcripts are kept in memory by the running agent (the last 200) and in the audit log as
+counts, never as audio. Call notes and draft replies are text you wrote. All of it is covered by
+**Delete local data**.
 
 Export or delete all of it from **Activity log → Export my data / Delete local data**.
 
@@ -149,9 +195,21 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
-- Voice input does **not** work inside the JARVIS window: stock Electron ships without a speech
-  recognition service. The mic button there is disabled and says so. Open the same page
-  (`http://127.0.0.1:8765`) in Chrome or Edge to talk to JARVIS — Hebrew recognition works there.
+- **Voice needs a speech engine installed on the computer.** Without whisper.cpp (or Vosk with its
+  optional Node binding) nothing is transcribed, and JARVIS says which component is missing and the
+  exact free steps to install it rather than guessing at what you said. An English-only model
+  (`*.en.bin`) is refused for Hebrew with that reason; use a multilingual one such as
+  `ggml-small.bin`.
+- **Speaking out loud uses the voices installed in Windows.** Chrome also offers voices that are
+  synthesised on Google's servers; those are excluded on purpose, so if no local voice exists for
+  your language JARVIS says so and stays silent instead of sending your text away.
+- **A phone over Wi-Fi cannot use its microphone for JARVIS, and cannot show a system
+  notification.** Browsers only allow both over https or from localhost, and the page your phone
+  opens is plain `http://192.168.…`. That is a browser rule, not a setting. The phone still shows
+  the alert on screen with a sound while the page is open, approves calls and opens the dialer —
+  none of which need a permission. Talk to JARVIS from the computer itself.
+- **Installing JARVIS as an app on the phone** (the offline shell) needs the same secure context,
+  so it is unavailable over plain http for the same reason.
 - Headless mode cannot show the native second confirmation, so high-risk plans approved remotely
   are refused there rather than run unconfirmed.
 - Local models are smaller than hosted assistants: they can misunderstand and are slower. Every plan
