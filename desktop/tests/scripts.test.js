@@ -22,7 +22,9 @@ test("no launcher pairs an args array with shell:true", () => {
 });
 
 test("windows command lines quote arguments and refuse dangerous ones", async () => {
-  const { windowsCommandLine } = await import(path.join(SCRIPTS, "spawn-compat.mjs"));
+  // On Windows an absolute path is not a valid ESM specifier ("protocol 'd:'"),
+  // so the dynamic import needs a file:// URL.
+  const { windowsCommandLine } = await import(require("url").pathToFileURL(path.join(SCRIPTS, "spawn-compat.mjs")).href);
   assert.equal(windowsCommandLine("npm", ["--prefix", "client", "install"]), "npm --prefix client install");
   assert.equal(windowsCommandLine("C:\\Program Files\\nodejs\\npm.cmd", ["run", "build"]), '"C:\\Program Files\\nodejs\\npm.cmd" run build');
   for (const bad of ["a & calc.exe", "a | b", "a > out", "%PATH%", 'say "hi"', "a\nb", "a^b"]) {

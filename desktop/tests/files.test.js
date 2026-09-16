@@ -91,3 +91,16 @@ test("deterministic tools: time, calc, memory, reminders, drafts", async () => {
   const c = await reg.run("create_calendar_draft", { title: "t", start_iso: "2030-01-01T10:00:00Z" }, { cfg });
   assert.ok(c.ok && fs.readFileSync(c.data.path, "utf8").includes("BEGIN:VEVENT"));
 });
+
+test("the JARVIS home is stored in one canonical spelling", () => {
+  // Windows exposes the same folder as a short (RUNNER~1) and a long name.
+  // Everything that compares paths must agree, so the constants are canonical.
+  const fsMod = require("fs");
+  assert.equal(paths.HOME, fsMod.realpathSync.native(paths.HOME));
+  assert.equal(paths.WORKSPACE, fsMod.realpathSync.native(paths.WORKSPACE));
+  assert.ok(resolveApproved(cfg, "notes.txt").startsWith(paths.WORKSPACE));
+  // A folder added through canonicalDir matches what resolveApproved returns.
+  const added = paths.canonicalDir(path.join(paths.HOME, "extra"));
+  const resolved = resolveApproved({ approvedFolders: [added] }, path.join(added, "x.txt"));
+  assert.ok(resolved.startsWith(added), `${resolved} should start with ${added}`);
+});

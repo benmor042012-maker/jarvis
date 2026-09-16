@@ -158,6 +158,10 @@ class Agent extends EventEmitter {
     if (clean.approvedFolders) {
       clean.approvedFolders = clean.approvedFolders.map((f) => path.resolve(String(f)));
       for (const f of clean.approvedFolders) if (!fs.existsSync(f) || !fs.statSync(f).isDirectory()) throw Object.assign(new Error(`Folder does not exist: ${f}`), { status: 400 });
+      // Canonical spelling: Windows reports the same folder as both a short
+      // (RUNNER~1) and a long name, and a stored short name would never match a
+      // resolved long one.
+      clean.approvedFolders = [...new Set(clean.approvedFolders.map((f) => paths.canonicalDir(f)))];
       if (!clean.approvedFolders.includes(paths.WORKSPACE)) clean.approvedFolders.unshift(paths.WORKSPACE);
     }
     if (clean.extraApps) {

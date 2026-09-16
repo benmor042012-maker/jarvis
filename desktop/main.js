@@ -241,7 +241,12 @@ ipcMain.handle("owner-device", () => {
 ipcMain.handle("agent-info", () => ({ port: serverInfo?.port, platform: process.platform, version: agent?.version, hotkey: agent?.hotkeyInfo }));
 ipcMain.handle("open-path", async (_e, p) => {
   const cfg = config.load();
-  const ok = (cfg.approvedFolders || []).some((f) => String(p).startsWith(f)) || String(p).startsWith(require("./src/core/paths").HOME);
+  const corePaths = require("./src/core/paths");
+  // Compare canonical spellings: on Windows the same folder arrives as a short
+  // name from one API and a long name from another.
+  const target = corePaths.canonicalDir(path.dirname(String(p))) + path.sep + path.basename(String(p));
+  const roots = [...(cfg.approvedFolders || []), corePaths.HOME].map((f) => corePaths.canonicalDir(f));
+  const ok = roots.some((root) => target === root || target.startsWith(root + path.sep));
   if (!ok) return { ok: false, reason: "outside approved folders" };
   const err = await shell.openPath(String(p));
   return { ok: !err, reason: err || null };
