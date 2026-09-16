@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "ai": "node scripts/install-ai.mjs",
     "start": "node scripts/start.mjs",
     "headless": "node scripts/start.mjs --headless",
     "build": "npm --prefix client run build",
@@ -14,6 +15,7 @@
     "test": "npm --prefix desktop test",
     "lint": "npm --prefix client run lint",
     "typecheck": "npm --prefix client run typecheck",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "e2e": "node scripts/e2e.mjs"
   }
 }

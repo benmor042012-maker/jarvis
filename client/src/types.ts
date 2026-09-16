@@ -123,6 +123,9 @@ export interface Status {
     data_leaving_computer: string;
   };
   devices: { connected: number; paired: number };
+  voice: { state: VoiceState; enabled: boolean; microphone: boolean; paused: boolean; muted: boolean };
+  alerts: { open: number; enabled: boolean };
+  phone: { enabled: boolean; can_answer_calls: boolean; open_calls: number };
   pending_plans: number;
   platform: string;
   host: "desktop" | "headless";
@@ -144,6 +147,28 @@ export interface Settings {
   allowedUrlHosts: string[];
   toolPolicies: Record<string, PolicyValue>;
   tts: { enabled: boolean; lang: string };
+  voice: {
+    enabled: boolean;
+    language: string;
+    wakePhrases: string[];
+    stopPhrases: string[];
+    quietHours: { enabled: boolean; start: string; end: string };
+    maxListenMs: number;
+    keepAudio: boolean;
+    whisperPath: string;
+    whisperModel: string;
+    voskModel: string;
+    transcribeTimeoutMs: number;
+    speakReplies: boolean;
+  };
+  alerts: {
+    enabled: boolean;
+    scanIntervalMs: number;
+    channels: { notification: boolean; sound: boolean; speech: boolean; phone: boolean };
+    speakDetails: boolean;
+    quietHours: { enabled: boolean; start: string; end: string };
+  };
+  phone: { enabled: boolean; simulation: boolean; allowDialer: boolean };
   drafts: { senderName: string; businessName: string };
   deviceExpiryDays: number;
   privacy: { keepAuditDays: number };
@@ -331,7 +356,11 @@ export type AgentEvent =
   | { type: "progress"; at: number; job_id: string; [k: string]: unknown }
   | { type: "reminder"; at: number; reminder: Reminder }
   | { type: "devices"; at: number; devices: DeviceInfo[] }
-  | { type: "project"; at: number; task_id: string; status: ProjectStatus; entry?: ProjectProgress; done?: boolean };
+  | { type: "project"; at: number; task_id: string; status: ProjectStatus; entry?: ProjectProgress; done?: boolean }
+  | { type: "voice_state"; at: number; state: VoiceState; reason: string | null }
+  | { type: "voice"; at: number; event: "woke" | "stopped" | "command"; phrase?: string; text?: string; until?: number; plan_id?: string | null }
+  | { type: "alert"; at: number; alert: CustomerAlert }
+  | { type: "call"; at: number; call: CallRequest };
 
 // Remote access through the relay. `configured` means an address and a room id
 // exist; `connected` means the computer is actually reaching the relay right now.
@@ -351,4 +380,155 @@ export interface RelayPairLink {
   code: string;
   expires_at: number;
   protocol: number;
+}
+
+// --- voice -----------------------------------------------------------------
+
+export type VoiceState = "unavailable" | "permission_required" | "off" | "standby" | "listening" | "thinking" | "speaking" | "paused" | "muted" | "quiet_hours";
+
+export interface SpeechEngineInstall {
+  what: string;
+  windows: string[];
+  other: string[];
+  note?: string;
+}
+
+export interface VoiceStatus {
+  state: VoiceState;
+  enabled: boolean;
+  engine: {
+    available: boolean;
+    name: string | null;
+    model: string | null;
+    hebrew: boolean;
+    reason: string | null;
+    install: SpeechEngineInstall | null;
+    checked: { whisperBinaries: string[]; whisperModels: string[]; vosk: unknown };
+  };
+  microphone: { granted: boolean; required: boolean };
+  wakePhrases: string[];
+  stopPhrases: string[];
+  quietHours: { enabled?: boolean; start?: string; end?: string; active: boolean };
+  maxListenMs: number;
+  keepAudio: boolean;
+  paused: boolean;
+  muted: boolean;
+  listening_until: number | null;
+  last_heard: { text: string; at: number; engine: string; source: string } | null;
+  last_error: { message: string; code: string | null; install: SpeechEngineInstall | null; at: number } | null;
+  stats: { wakes: number; falseWakes: number; commands: number; stops: number; utterances: number };
+}
+
+export interface VoiceHistoryEntry {
+  at: number;
+  kind: "stop" | "ignored" | "false_wake" | "quiet_hours" | "wake" | "empty" | "command";
+  text?: string;
+  phrase?: string;
+  why?: string;
+}
+
+export interface UtteranceResult {
+  ok: boolean;
+  action: "ignored" | "woke" | "stopped" | "command";
+  reason?: string;
+  detail?: string;
+  text?: string;
+  phrase?: string;
+  listening_until?: number;
+  model_used?: boolean;
+  plan?: Plan;
+  job?: Job | null;
+}
+
+// --- customers and alerts ---------------------------------------------------
+
+export interface CustomerSignal {
+  code: string;
+  weight: number;
+  why: string;
+  hours?: number;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  contact: string;
+  phone: string;
+  subject: string;
+  note: string;
+  lastMessage: string;
+  priority: "normal" | "high";
+  deadline: string;
+  waitingSince: string;
+  answered: boolean;
+  created_at: number;
+  updated_at: number;
+  score: number;
+  urgent: boolean;
+  signals: CustomerSignal[];
+}
+
+export type AlertStatus = "open" | "acknowledged" | "snoozed" | "resolved";
+
+export interface CustomerAlert {
+  id: string;
+  created_at: number;
+  customer_id: string;
+  customer_name: string;
+  headline: string;
+  score: number;
+  signals: CustomerSignal[];
+  status: AlertStatus;
+  acknowledged_at: number | null;
+  snooze_until: number;
+  attempts: number;
+  last_attempt_at: number | null;
+  delivered: { window: boolean; notification: boolean; sound: boolean; speech: boolean; phone: number };
+  quiet_hours: boolean;
+  label: string;
+}
+
+// --- phone ------------------------------------------------------------------
+
+export interface PhoneCapability {
+  available: boolean;
+  why: string;
+  one_time_step: string | null;
+  requires?: string;
+  blocked_because?: string;
+}
+
+export type PhoneCapabilityKey = "place_call_from_computer" | "open_dialer_on_phone" | "auto_dial_without_pressing" | "answer_incoming_call" | "answer_from_computer_over_bluetooth" | "record_call_audio";
+
+export interface PhoneCapabilities {
+  capabilities: Record<PhoneCapabilityKey, PhoneCapability>;
+  phones: { id: string; name: string; online: boolean; last_seen: number | null }[];
+  simulation_enabled: boolean;
+  answering_enabled: boolean;
+  summary: string;
+}
+
+export type CallStatus = "pending_approval" | "approved" | "simulated" | "dialer_opened" | "closed" | "rejected" | "stopped" | "expired";
+
+export interface CallRequest {
+  id: string;
+  created_at: number;
+  expires_at: number;
+  number: string;
+  number_masked: string;
+  reason: string;
+  customer_id: string | null;
+  simulation: boolean;
+  simulation_because: string | null;
+  status: CallStatus;
+  approved_by: string | null;
+  approved_at: number | null;
+  dialer_opened_at: number | null;
+  dialer_device: string | null;
+  outcome: string | null;
+  outcome_note: string;
+  transcript: { at: number; speaker: "me" | "them"; text: string }[];
+  draft: string;
+  requested_by: string;
+  hash: string;
 }

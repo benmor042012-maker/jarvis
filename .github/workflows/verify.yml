@@ -1,0 +1,87 @@
+# Every check a contributor runs locally, run on every push and pull request.
+# Free for this public repository, and it needs no secrets: JARVIS has no
+# accounts, keys or providers to configure.
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the oldest LTS the project claims to support; 22 is current.
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      # The agent core has no dependencies at all; only the UI needs installing.
+      - name: Install the interface
+        run: npm --prefix client ci --no-audit --no-fund
+
+      - name: Verify (self-contained scan, agent tests, typecheck, lint, build)
+        run: npm run verify
+
+  browser:
+    # The voice interface can only really be proven in a browser: the page has
+    # to open a microphone, cut what it hears into recordings and upload them.
+    # Chromium plays a fixed WAV into a fake microphone, and a stub stands in
+    # for the speech engine, which no build machine can be assumed to have.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install the interface
+        run: npm --prefix client ci --no-audit --no-fund
+      - name: Build the interface
+        run: npm run build
+      - name: Install Chromium
+        run: npm i --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Voice, alerts and calls in a real browser
+        run: npm run e2e
+
+  windows-smoke:
+    # The launchers exist for Windows, so they are exercised on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install the interface
+        run: npm --prefix client ci --no-audit --no-fund
+      - name: Agent tests
+        run: npm --prefix desktop test
+      - name: Launchers must not warn (DEP0190) or fail
+        shell: pwsh
+        run: |
+          # DEP0190 is emitted by whichever process calls spawn — here, verify.mjs
+          # itself — so grepping its output catches a regression in the launchers.
+          $out = node scripts/verify.mjs 2>&1 | Out-String
+          Write-Output $out
+          if ($out -match 'DEP0190') { throw 'DEP0190: a launcher paired an args array with a shell' }
+          if ($LASTEXITCODE -ne 0) { throw "verify failed with exit code $LASTEXITCODE" }

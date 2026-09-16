@@ -4,7 +4,24 @@ const path = require("path");
 const os = require("os");
 const fs = require("fs");
 
-const HOME = process.env.JARVIS_HOME || path.join(os.homedir(), ".jarvis");
+const RAW_HOME = process.env.JARVIS_HOME || path.join(os.homedir(), ".jarvis");
+
+// Windows hands out the same directory under two spellings: the 8.3 short form
+// (C:\Users\RUNNER~1\AppData\Local\Temp) from some APIs and the long form from
+// others. Anything that compares a resolved path against one of the constants
+// below — the approved-folder check, the desktop "open folder" guard — would
+// then compare two spellings of the same place and refuse it. Canonicalise once
+// here so every comparison in the app speaks one spelling.
+function canonicalDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return fs.realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
+}
+
+const HOME = canonicalDir(RAW_HOME);
 const P = {
   HOME,
   CONFIG: path.join(HOME, "config.json"),
@@ -42,4 +59,4 @@ function writeJson(file, data, mode = 0o600) {
   fs.renameSync(tmp, file);
 }
 
-module.exports = { ...P, ensureDirs, readJson, writeJson };
+module.exports = { ...P, canonicalDir, ensureDirs, readJson, writeJson };

@@ -243,3 +243,24 @@ test("remote access is off until it is configured, and misconfiguration is repor
   assert.throws(() => config.update({ relay: { url: "http://relay.example" } }), /https/);
   assert.throws(() => config.update({ relay: { room: "nope" } }), /32 hex/);
 });
+
+test("the settings screen cannot quietly flip remote access on", async () => {
+  const config = require("../src/core/config");
+  config.update({ relay: { enabled: false, url: "", room: "" } });
+
+  // relay is exempt from the generic settings write (see server.test.js). The
+  // exemption has to be a refusal, not a silent drop: a switch that moves while
+  // nothing changes, and nothing says so, is the worst of both.
+  const res = await fetch(base + "/api/settings/update", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(sign(
+      { v: 1, id: uuid(), device_id: owner.id, ts: Date.now(), expires: Date.now() + 60000, nonce: randomHex(12), params: { settings: { relay: { enabled: true } } } },
+      owner.secret, "POST", "/api/settings/update",
+    )),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.match(String(body.detail || body.error), /relay\/configure/);
+  assert.equal(config.load().relay.enabled, false, "remote access must still be off");
+});

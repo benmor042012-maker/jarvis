@@ -182,7 +182,9 @@ export function DevicesPanel() {
               id="relay-url"
               type="url"
               inputMode="url"
-              placeholder="https://jarvis-relay.your-name.workers.dev"
+              // Deliberately not a sample URL: the client hardcodes no address
+              // off this machine, and a fake one here reads like a default.
+              placeholder="The address wrangler deploy printed"
               value={relayUrl}
               onChange={(e) => { setRelayUrl(e.target.value); }}
               disabled={relaySaveState.phase === "loading"}

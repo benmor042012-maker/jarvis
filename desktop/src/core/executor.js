@@ -280,8 +280,13 @@ class Executor extends EventEmitter {
     return n;
   }
 
+  // Only plans with an action actually waiting on the user. A plan that
+  // understood nothing, or whose actions all run without asking, is not an
+  // approval and must never show up as one.
   pendingPlans() {
-    return [...this.plans.values()].filter((p) => (p.status === "pending" || p.status === "awaiting_local") && nowMs() < p.expires_at && p.actions.length).map((p) => this.publicPlan(p));
+    return [...this.plans.values()]
+      .filter((p) => (p.status === "pending" || p.status === "awaiting_local") && nowMs() < p.expires_at && p.requires_approval && p.actions.some((a) => a.decision === "ask"))
+      .map((p) => this.publicPlan(p));
   }
 }
 

@@ -129,3 +129,17 @@ test("offline mode blocks network tools with a reason instead of faking them", a
   assert.match(p.body.task.publish, /offline mode/);
   await c.call("settings/update", { settings: { offlineMode: false } });
 });
+
+test("an emergency stop says what stopped it, in the very first event", async () => {
+  const seen = [];
+  const onEvent = (e) => { if (e.type === "status") seen.push(e.status.emergency_source); };
+  agent.on("event", onEvent);
+  agent.emergencyStop("voice:עצור");
+  agent.off("event", onEvent);
+  // The status event fires while the stop is still being applied, so the source
+  // has to be in place before it — otherwise every screen reads "unknown".
+  assert.ok(seen.length >= 1, "an emergency stop must emit a status event");
+  assert.equal(seen[0], "voice:עצור");
+  assert.equal(agent.status().emergency_source, "voice:עצור");
+  agent.clearEmergency({ name: "test" });
+});

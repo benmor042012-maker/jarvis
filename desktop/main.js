@@ -26,6 +26,19 @@ let tray = null;
 let serverInfo = null;
 let quitting = false;
 
+const VOICE_LABEL = {
+  unavailable: "unavailable",
+  permission_required: "permission needed",
+  off: "off",
+  standby: "waiting for the wake phrase",
+  listening: "LISTENING",
+  thinking: "thinking",
+  speaking: "speaking",
+  paused: "paused",
+  muted: "muted",
+  quiet_hours: "quiet hours",
+};
+
 const STATE_LABEL = {
   connected: "Connected",
   listening: "Listening",
@@ -40,6 +53,15 @@ function assetIcon(state) {
   return nativeImage.createFromPath(fs.existsSync(file) ? file : path.join(__dirname, "assets", "tray-connected.png"));
 }
 
+function isOwnPage(url) {
+  try {
+    const u = new URL(String(url));
+    return (u.hostname === "127.0.0.1" || u.hostname === "localhost") && (!serverInfo || Number(u.port) === Number(serverInfo.port));
+  } catch {
+    return false;
+  }
+}
+
 function clientDist() {
   const candidates = [path.join(process.resourcesPath || "", "client-dist"), path.join(__dirname, "..", "client", "dist")];
   return candidates.find((c) => fs.existsSync(path.join(c, "index.html"))) || candidates[1];
@@ -49,6 +71,12 @@ async function boot() {
   const host = {
     confirmLocal,
     notify: (title, body) => { if (Notification.isSupported()) new Notification({ title, body }).show(); showWindow(); },
+    // Sound and speech live in the window: the Web Audio and speech-synthesis
+    // engines are renderer APIs, and the voices they use are the ones already
+    // installed in Windows. If there is no window to ask, say so by throwing —
+    // the alert record must not claim a channel that did not fire.
+    alertSound: () => { if (!sendToWindow("jarvis:alert-sound", null)) { shell.beep(); } },
+    speak: (text) => { if (!sendToWindow("jarvis:speak", String(text || ""))) throw new Error("no window to speak from"); },
     onEmergencyStop: () => { showWindow(); updateTray(); },
     onSettingsChanged: (cfg, before) => {
       if (cfg.autoStart !== before.autoStart) applyAutoStart(cfg);
@@ -63,7 +91,7 @@ async function boot() {
     encrypt: canEncrypt ? (s) => safeStorage.encryptString(s).toString("base64") : undefined,
     decrypt: canEncrypt ? (b) => safeStorage.decryptString(Buffer.from(b, "base64")) : undefined,
   });
-  agent.on("event", (e) => { if (e.type === "status" || e.type === "plan") updateTray(); });
+  agent.on("event", (e) => { if (e.type === "status" || e.type === "plan" || e.type === "voice_state" || e.type === "alert") updateTray(); });
   serverInfo = await agent.start({ staticRoot: clientDist() });
   agent.ownerDevice();
   const cfg = config.load();
@@ -100,11 +128,40 @@ function createWindow() {
     }
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: "deny" }; });
+
+  // The window may use the microphone, and only the microphone, and only while
+  // voice is switched on. Camera, screen capture, geolocation, notifications
+  // and everything else are refused here — the native notification comes from
+  // this process, and nothing in JARVIS needs the rest.
+  const allowMedia = (details) => {
+    if (!isOwnPage(details?.securityOrigin || details?.requestingUrl || mainWindow.webContents.getURL())) return false;
+    if (details && Array.isArray(details.mediaTypes) && details.mediaTypes.includes("video")) return false;
+    return config.load().voice?.enabled !== false;
+  };
+  const ses = mainWindow.webContents.session;
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    const ok = permission === "media" ? allowMedia(details) : false;
+    audit.log({ event: "window_permission", detail: { permission, granted: ok } });
+    callback(ok);
+  });
+  ses.setPermissionCheckHandler((_wc, permission, origin, details) => (permission === "media" ? allowMedia({ ...details, securityOrigin: origin }) : false));
+  ses.setDevicePermissionHandler(() => false);
 }
 
 function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   else { mainWindow.show(); mainWindow.focus(); }
+}
+
+/** True if the message actually reached a live window. */
+function sendToWindow(channel, payload) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false;
+  try {
+    mainWindow.webContents.send(channel, payload);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // --- tray ----------------------------------------------------------------------
@@ -119,8 +176,16 @@ function updateTray() {
   const status = agent.status();
   const cfg = config.load();
   const state = status.state;
-  tray.setImage(assetIcon(state));
-  tray.setToolTip(`JARVIS — ${STATE_LABEL[state] || state} · ${cfg.mode.toUpperCase()} mode${status.pending_plans ? ` · ${status.pending_plans} approval(s) waiting` : ""}`);
+  const voice = status.voice || {};
+  // "Listening" on the tray means the microphone is actually open right now.
+  const icon = state === "connected" && voice.state === "listening" ? "listening" : state;
+  tray.setImage(assetIcon(icon));
+  tray.setToolTip(
+    `JARVIS — ${STATE_LABEL[state] || state} · ${cfg.mode.toUpperCase()} mode` +
+      ` · mic ${VOICE_LABEL[voice.state] || voice.state || "off"}` +
+      (status.alerts?.open ? ` · ${status.alerts.open} customer alert(s)` : "") +
+      (status.pending_plans ? ` · ${status.pending_plans} approval(s) waiting` : ""),
+  );
   const menu = Menu.buildFromTemplate([
     { label: `JARVIS — ${STATE_LABEL[state] || state}`, enabled: false },
     { label: `Devices: ${status.devices.connected} connected, ${status.devices.paired} paired`, enabled: false },
@@ -128,6 +193,15 @@ function updateTray() {
     { type: "separator" },
     { label: "Open JARVIS", click: showWindow },
     { label: status.pending_plans ? `Review ${status.pending_plans} pending approval(s)` : "No pending approvals", enabled: !!status.pending_plans, click: showWindow },
+    { label: status.alerts?.open ? `${status.alerts.open} customer alert(s) — open` : "No customer alerts", enabled: !!status.alerts?.open, click: showWindow },
+    { type: "separator" },
+    { label: `Microphone: ${VOICE_LABEL[voice.state] || voice.state || "off"}`, enabled: false },
+    voice.paused
+      ? { label: "Resume microphone", click: () => { agent.voice.setPaused(false); updateTray(); } }
+      : { label: "Pause microphone", click: () => { agent.voice.setPaused(true); updateTray(); } },
+    voice.muted
+      ? { label: "Unmute JARVIS", click: () => { agent.voice.setMuted(false); updateTray(); } }
+      : { label: "Mute JARVIS (no listening, no speaking)", click: () => { agent.voice.setMuted(true); updateTray(); } },
     { type: "separator" },
     status.emergency
       ? { label: "Clear emergency stop", click: () => { agent.clearEmergency({ name: "tray" }); updateTray(); } }
@@ -241,7 +315,12 @@ ipcMain.handle("owner-device", () => {
 ipcMain.handle("agent-info", () => ({ port: serverInfo?.port, platform: process.platform, version: agent?.version, hotkey: agent?.hotkeyInfo }));
 ipcMain.handle("open-path", async (_e, p) => {
   const cfg = config.load();
-  const ok = (cfg.approvedFolders || []).some((f) => String(p).startsWith(f)) || String(p).startsWith(require("./src/core/paths").HOME);
+  const corePaths = require("./src/core/paths");
+  // Compare canonical spellings: on Windows the same folder arrives as a short
+  // name from one API and a long name from another.
+  const target = corePaths.canonicalDir(path.dirname(String(p))) + path.sep + path.basename(String(p));
+  const roots = [...(cfg.approvedFolders || []), corePaths.HOME].map((f) => corePaths.canonicalDir(f));
+  const ok = roots.some((root) => target === root || target.startsWith(root + path.sep));
   if (!ok) return { ok: false, reason: "outside approved folders" };
   const err = await shell.openPath(String(p));
   return { ok: !err, reason: err || null };
