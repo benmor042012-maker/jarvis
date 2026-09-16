@@ -82,9 +82,9 @@ function rulePlan(input, ctx = {}) {
   }
   if ((m = text.match(/^(?:create|make|new|צור|תיצור|תצור)\s+(?:a\s+)?(?:folder|directory|dir|תיקייה|תיקיה)\s+(?:called\s+|named\s+|בשם\s+)?(.+)$/i))) return plan(he ? "יוצר תיקייה." : "Creating the folder.", [{ tool: "create_folder", params: { path: q(m[1]) } }]);
   if ((m = text.match(/^(?:read|show|display|cat|קרא|הצג|תקרא)\s+(?:the\s+)?(?:file|note|קובץ|את הקובץ|את קובץ)\s+(.+)$/i))) return plan(he ? "קורא את הקובץ." : "Reading the file.", [{ tool: "read_file", params: { path: q(m[1]) } }]);
-  if ((m = text.match(/^(?:list|show|הצג|רשימת|מה יש ב)\s*(?:the\s+)?(?:files|folder|directory|קבצים|תיקייה)(?:\s+(?:in|of|ב|בתיקייה)\s+(.+))?$/i))) return plan(he ? "מציג קבצים." : "Listing files.", [{ tool: "list_files", params: { folder: m[1] ? q(m[1]) : "" } }]);
-  if ((m = text.match(/^(?:search|find|look for|חפש|תחפש|מצא)\s+(?:for\s+|files?\s+(?:named|called)?\s*|קובץ\s+|קבצים\s+|את\s+)?(.+?)(?:\s+(?:in|ב|בתיקייה)\s+(.+))?$/i))) return plan(he ? "מחפש קבצים." : "Searching files.", [{ tool: "search_files", params: { query: q(m[1]), folder: m[2] ? q(m[2]) : "" } }]);
-  if ((m = text.match(/^(?:move|rename|העבר|שנה שם של|שנה את השם של)\s+(?:file\s+|קובץ\s+|את\s+)?(.+?)\s+(?:to|ל|אל)\s+(.+)$/i))) return plan(he ? "העברה/שינוי שם דורש אישור." : "Move/rename needs approval.", [{ tool: "move_file", params: { from: q(m[1]), to: q(m[2]) } }]);
+  if ((m = text.match(/^(?:list|show|הצג|רשימת|מה יש ב)\s*(?:the\s+)?(?:files|folder|directory|קבצים|תיקייה)(?:\s+(?:in\s+|of\s+|בתיקייה\s+|ב-?)(.+))?$/i))) return plan(he ? "מציג קבצים." : "Listing files.", [{ tool: "list_files", params: { folder: m[1] ? q(m[1]) : "" } }]);
+  if ((m = text.match(/^(?:search|find|look for|חפש|תחפש|מצא)\s+(?:for\s+|files?\s+(?:named|called)?\s*|קובץ\s+|קבצים\s+|את\s+)?(.+?)(?:\s+(?:in\s+|בתיקייה\s+|ב-?)(.+))?$/i))) return plan(he ? "מחפש קבצים." : "Searching files.", [{ tool: "search_files", params: { query: q(m[1]), folder: m[2] ? q(m[2]) : "" } }]);
+  if ((m = text.match(/^(?:move|rename|העבר|שנה שם של|שנה את השם של)\s+(?:file\s+|קובץ\s+|את\s+)?(.+?)\s+(?:to\s+|אל\s+|ל-?)(.+)$/i))) return plan(he ? "העברה/שינוי שם דורש אישור." : "Move/rename needs approval.", [{ tool: "move_file", params: { from: q(m[1]), to: q(m[2]) } }]);
   if ((m = text.match(/^(?:delete|remove|trash|מחק|תמחק|הסר)\s+(?:the\s+)?(?:file\s+|folder\s+|קובץ\s+|תיקייה\s+|את\s+)?(.+)$/i))) return plan(he ? "מחיקה מעבירה לסל של JARVIS ודורשת אישור." : "Deleting moves the item to the JARVIS trash and needs approval.", [{ tool: "delete_file", params: { path: q(m[1]) } }]);
 
   // Shell
@@ -98,7 +98,7 @@ function rulePlan(input, ctx = {}) {
   if ((m = text.match(/^(?:draft|write|compose|נסח|כתוב)\s+(?:an?\s+)?(?:email|mail|מייל|אימייל)\s*(?:to|אל|ל)?\s*([^:]*?)?(?:\s*(?:subject|נושא)\s*[:\-]\s*([^:]+?))?\s*[:\-]\s*([\s\S]+)$/i))) {
     return plan(he ? "טיוטת מייל בלבד — שום דבר לא נשלח." : "Email draft only — nothing is sent.", [{ tool: "create_email_draft", params: { to: q(m[1] || ""), subject: q(m[2] || ""), body: m[3].trim() } }]);
   }
-  if ((m = text.match(/^(?:schedule|create (?:an? )?event|add (?:an? )?event|קבע|צור אירוע|קבע פגישה|תקבע)\s+(.+?)\s+(?:at|on|ב|בתאריך)\s+(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2})?)$/i))) {
+  if ((m = text.match(/^(?:schedule|create (?:an? )?event|add (?:an? )?event|קבע|צור אירוע|קבע פגישה|תקבע)\s+(.+?)\s+(?:at\s+|on\s+|בתאריך\s+|ב-?)(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2})?)$/i))) {
     return plan(he ? "יוצר קובץ יומן (.ics) — לא נוסף ליומן בלי שתפתח אותו." : "Creating a calendar file (.ics) — nothing is added to a calendar until you open it.", [{ tool: "create_calendar_draft", params: { title: q(m[1]), start_iso: m[2].replace(" ", "T") } }]);
   }
   if (/(draft|נסח|טיוטה).*(message|customer|client|whatsapp|הודעה|ללקוח|לקוח)/i.test(text)) return plan(he ? "טיוטות ללקוחות נמצאות בלוח 'טיוטות' — שם רואים נמען, מטרה, טקסט ותזמון. שום דבר לא נשלח." : "Customer messages are drafted in the Drafts panel, which shows recipient, purpose, text and timing. Nothing is sent.", [], { suggest: "drafts" });
@@ -121,7 +121,7 @@ function rulePlan(input, ctx = {}) {
   }
 
   // Open: url / app / file
-  if ((m = text.match(/^(?:open|launch|start|go to|visit|פתח|תפתח|הפעל|תפעיל|היכנס ל|גש ל)\s+(?:the\s+|את\s+)?(.+)$/i))) {
+  if ((m = text.match(/^(?:open|launch|start|go to|visit|פתח|תפתח|הפעל|תפעיל|היכנס ל-?|גש ל-?)\s*(?:the\s+|את\s+)?(.+)$/i))) {
     const target = q(m[1]).replace(/[.!؟?]+$/, "");
     const tl = target.toLowerCase();
     for (const [word, url] of Object.entries(URL_WORDS)) if (tl === word || tl.startsWith(word + " ") || tl.endsWith(" " + word)) return plan(he ? `פותח ${word}.` : `Opening ${word}.`, [{ tool: "open_url", params: { url } }]);
