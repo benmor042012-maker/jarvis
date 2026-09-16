@@ -4,3 +4,6 @@ client/dist/
 desktop/dist/
 *.log
 .DS_Store
+.venv/
+.wrangler/
+server/data/

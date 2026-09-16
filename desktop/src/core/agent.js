@@ -18,6 +18,8 @@ const local = require("./planner/local-model");
 const { dueReminders } = require("./tools/info");
 const { nowMs } = require("./util");
 
+const { RelayClient } = require("./relay-client");
+
 const VERSION = require("../../package.json").version;
 
 class Agent extends EventEmitter {
@@ -32,6 +34,7 @@ class Agent extends EventEmitter {
     this.drafts = new Drafts({ getConfig: () => this.cfg() });
     this.projects = new Projects({ getConfig: () => this.cfg(), state: this.state });
     this.server = new Server(this);
+    this.relay = new RelayClient(this, this.server);
     this.emergencySource = null;
     this.hotkeyInfo = { requested: this.cfg().hotkeys.emergencyStop, active: null, error: null };
 
@@ -52,7 +55,10 @@ class Agent extends EventEmitter {
     const { port, lanEnabled } = this.cfg().server;
     const info = await this.server.start({ port, lan: lanEnabled });
     this.reminderTimer = setInterval(() => this._tickReminders(), 15000);
-    audit.log({ event: "agent_started", detail: { port: info.port, lan: info.lan, version: VERSION } });
+    // Remote access only starts if the user turned it on; a fresh install is
+    // local-only until someone explicitly changes that.
+    if (this.cfg().relay?.enabled) this.relay.start();
+    audit.log({ event: "agent_started", detail: { port: info.port, lan: info.lan, version: VERSION, relay: !!this.cfg().relay?.enabled } });
     return info;
   }
 
@@ -63,6 +69,7 @@ class Agent extends EventEmitter {
 
   stop() {
     clearInterval(this.reminderTimer);
+    this.relay.stop();
     this.server.stop();
     procs.killAll();
     audit.log({ event: "agent_stopped" });
@@ -120,6 +127,7 @@ class Agent extends EventEmitter {
       mode: cfg.mode,
       offline_mode: !!cfg.offlineMode,
       lan: { enabled: !!cfg.server.lanEnabled, port: this.server.listening?.port || cfg.server.port, addresses: cfg.server.lanEnabled ? lanAddresses() : [] },
+      relay: this.relay.status(),
       hotkey: this.hotkeyInfo,
       cost_network: {
         local_ai_only: true,

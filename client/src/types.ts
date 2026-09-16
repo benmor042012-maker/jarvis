@@ -332,3 +332,23 @@ export type AgentEvent =
   | { type: "reminder"; at: number; reminder: Reminder }
   | { type: "devices"; at: number; devices: DeviceInfo[] }
   | { type: "project"; at: number; task_id: string; status: ProjectStatus; entry?: ProjectProgress; done?: boolean };
+
+// Remote access through the relay. `configured` means an address and a room id
+// exist; `connected` means the computer is actually reaching the relay right now.
+export interface RelayStatus {
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  connected: boolean;
+  url: string | null;
+  last_poll: number | null;
+  last_error: string | null;
+}
+
+export interface RelayPairLink {
+  relay_url: string;
+  room: string;
+  code: string;
+  expires_at: number;
+  protocol: number;
+}

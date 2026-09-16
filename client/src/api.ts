@@ -1,5 +1,5 @@
 import { AgentApi } from "./lib/protocol";
-import type { AiStatus, AppInfo, AuditEntry, DeviceInfo, Draft, DraftTemplate, Job, PairCode, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, Status, ToolInfo } from "./types";
+import type { AiStatus, AppInfo, AuditEntry, DeviceInfo, Draft, DraftTemplate, Job, PairCode, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, RelayPairLink, RelayStatus, Settings, SettingsUpdate, Status, ToolInfo } from "./types";
 
 export const agentApi = new AgentApi("");
 
@@ -28,6 +28,10 @@ export const api = {
   pairCode: () => agentApi.call<Ok<PairCode>>("devices/pair-code"),
   revokeDevice: (device_id: string) => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/revoke", { device_id }),
   renameDevice: (device_id: string, name: string) => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/rename", { device_id, name }),
+  relayStatus: () => agentApi.call<Ok<{ relay: RelayStatus }>>("relay/status"),
+  configureRelay: (params: { url?: string; enabled?: boolean; rotate_room?: boolean }) =>
+    agentApi.call<Ok<{ relay: RelayStatus; status: Status }>>("relay/configure", params, { timeoutMs: 20000 }),
+  relayPairLink: () => agentApi.call<Ok<RelayPairLink>>("relay/pair-link"),
   audit: (limit = 200, days = 7) => agentApi.call<Ok<{ entries: AuditEntry[] }>>("audit/read", { limit, days }),
   exportData: () => agentApi.call<Ok<Record<string, unknown>>>("data/export", {}, { timeoutMs: 60000 }),
   deleteData: (what: Record<string, boolean>) => agentApi.call<Ok<{ deleted: Record<string, unknown> }>>("data/delete", what),

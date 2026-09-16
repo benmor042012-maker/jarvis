@@ -3,7 +3,9 @@
 <p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS: a dark navy screen with a glowing cyan orb, status READY, a session log and a command bar" width="860"></p>
 
 A **self-contained** local AI assistant that really controls your Windows computer.
-No cloud, no account, no API key, no subscription, no payment — anywhere, ever.
+No cloud AI, no account, no API key, no subscription, no payment — anywhere, ever.
+The one optional outbound piece is the relay that lets your phone reach the computer from
+outside your home; it is free, off by default, and cannot read a single byte it carries.
 
 Public page: <https://benmor042012-maker.github.io/jarvis/> (explains and links the download; a web page can never control a computer — the installed agent does).
 
@@ -44,7 +46,7 @@ Three pieces, all on your machine:
 | --- | --- |
 | **Agent core** (`desktop/src/core`) | Tool registry, permission policy, signed command protocol, device pairing, executor, audit log, local HTTP server. Pure Node, no dependencies. |
 | **Desktop shell** (`desktop/main.js`) | Electron: tray, hide-to-tray, Windows auto-start, global emergency-stop hotkey, the native second confirmation for high-risk actions, and the built-in browser used for form automation. |
-| **Interface** (`client/`) | The React UI with the J.A.R.V.I.S orb. Served by the agent at `http://127.0.0.1:8765` — the same page your phone opens over Wi-Fi after pairing. |
+| **Interface** (`client/`) | The React UI with the J.A.R.V.I.S orb. Served by the agent at `http://127.0.0.1:8765` — the same page your phone opens after pairing, over Wi-Fi or through the optional relay. |
 
 The GitHub Pages site is documentation only. Browsers block page access to files, mouse and
 keyboard; that is a browser security guarantee and nothing can work around it.
@@ -107,6 +109,26 @@ single-use code (and a QR) that expires in 5 minutes. From the phone you can see
 commands, approve plans, read the redacted log and revoke the device. When the computer is off,
 asleep, disconnected or the agent is stopped, the phone says exactly that — it never shows a fake
 connected state.
+
+### From outside the house
+
+On the same Wi-Fi the phone talks to the computer directly. From anywhere else it cannot: your
+home router has no route in, and nothing here opens a public port. A **relay** bridges that gap —
+the computer dials *out* and holds a long poll, so the phone's message has somewhere to meet it.
+
+Deploy your own in one command (`cd relay && npx wrangler deploy` — free tier, see
+[`relay/README.md`](relay/README.md)), paste the address into **Devices → Control this computer
+from your phone**, and turn it on. Until you do, the agent never dials out.
+
+The relay is a pipe, not a participant:
+
+- Every frame is sealed end to end with AES-256-GCM under a key derived from the paired device's
+  own secret. The relay sees opaque bytes and a random room id.
+- Relayed messages go through `server.dispatch` — the *same* verifier as the local link. A hostile
+  relay cannot forge a command, replay one, tamper with its parameters, or promote a phone to
+  owner; those four refusals are tests, not claims (`desktop/tests/relay.test.js`).
+- It can delay or drop a message. That is the whole of its power, and the phone shows it as a
+  timeout rather than inventing a result.
 
 ## Commands
 

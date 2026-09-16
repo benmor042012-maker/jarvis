@@ -6,7 +6,7 @@ import { Dialog } from "../components/Dialog";
 import { describeError } from "../lib/protocol";
 import { useAction } from "../lib/useAction";
 import { useJarvis } from "../state/jarvisStore";
-import type { DeviceInfo, PairCode } from "../types";
+import type { DeviceInfo, PairCode, RelayStatus } from "../types";
 
 export function DevicesPanel() {
   const setPanel = useJarvis((s) => s.setPanel);
@@ -41,8 +41,24 @@ export function DevicesPanel() {
     const c = await api.pairCode();
     setPairCode(c);
     const url = c.urls.find((u) => !u.includes("127.0.0.1")) ?? c.urls[0] ?? "";
+
+    // If remote access is on, the QR also carries the relay address and room id,
+    // so a phone paired here on the local network keeps working once it leaves.
+    // The one-time code and the room live in the URL fragment, which browsers
+    // never send to a server.
+    let fragment = `code=${c.code}`;
     try {
-      setQr(await QRCode.toDataURL(`${url}#code=${c.code}`, { margin: 1, width: 220, color: { dark: "#eaf6ff", light: "#00000000" } }));
+      const { relay } = await api.relayStatus();
+      if (relay.enabled && relay.connected && relay.url) {
+        const link = await api.relayPairLink();
+        fragment = `code=${link.code}&relay=${encodeURIComponent(link.relay_url)}&room=${link.room}`;
+      }
+    } catch {
+      // Remote access is off or unreachable: pair on the local network only.
+    }
+
+    try {
+      setQr(await QRCode.toDataURL(`${url}#${fragment}`, { margin: 1, width: 220, color: { dark: "#eaf6ff", light: "#00000000" } }));
     } catch {
       setQr(null);
     }
@@ -52,6 +68,31 @@ export function DevicesPanel() {
     await api.revokeDevice(id);
     await load();
   });
+
+  const [relay, setRelayStatus] = useState<RelayStatus | null>(null);
+  const [relayUrl, setRelayUrl] = useState("");
+
+  const [loadRelayStatus] = useAction(async () => {
+    const { relay: r } = await api.relayStatus();
+    setRelayStatus(r);
+    setRelayUrl(r.url ?? "");
+  });
+
+  const [saveRelaySettings, relaySaveState] = useAction(async (enabled: boolean) => {
+    const { relay: r } = await api.configureRelay({ url: relayUrl.trim(), enabled });
+    setRelayStatus(r);
+  });
+
+  const [rotateRoom, rotateState] = useAction(async () => {
+    const { relay: r } = await api.configureRelay({ rotate_room: true });
+    setRelayStatus(r);
+    setPairCode(null);
+    setQr(null);
+  });
+
+  useEffect(() => {
+    if (creds?.role === "owner") void loadRelayStatus();
+  }, [creds?.role, loadRelayStatus]);
 
   const isOwner = creds?.role === "owner";
   const codeLeft = pairCode ? Math.max(0, Math.round((pairCode.expires_at - now) / 1000)) : 0;
@@ -125,6 +166,65 @@ export function DevicesPanel() {
           </p>
         )}
       </section>
+
+      {isOwner && (
+        <section>
+          <h3>Control this computer from your phone</h3>
+          <p className="help">
+            Your phone cannot reach this computer directly over the internet. A relay passes messages between them. It carries
+            only sealed frames: it cannot read a command, create one, or approve anything. Set it up once with{" "}
+            <code>npx wrangler deploy</code> in the <code>relay</code> folder — it is free.
+          </p>
+
+          <div className="field-row">
+            <label htmlFor="relay-url">Relay address</label>
+            <input
+              id="relay-url"
+              type="url"
+              inputMode="url"
+              placeholder="https://jarvis-relay.your-name.workers.dev"
+              value={relayUrl}
+              onChange={(e) => { setRelayUrl(e.target.value); }}
+              disabled={relaySaveState.phase === "loading"}
+            />
+          </div>
+
+          <div className="row-actions">
+            {relay?.enabled ? (
+              <button type="button" className="btn btn-danger" onClick={() => void saveRelaySettings(false)} disabled={relaySaveState.phase === "loading"}>
+                Turn remote access off
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={() => void saveRelaySettings(true)} disabled={relaySaveState.phase === "loading" || !relayUrl.trim()}>
+                {relaySaveState.phase === "loading" ? "Connecting…" : "Turn remote access on"}
+              </button>
+            )}
+            {relay?.enabled && (
+              <button type="button" className="btn" onClick={() => void rotateRoom()} disabled={rotateState.phase === "loading"}>
+                Change address (disconnects every phone)
+              </button>
+            )}
+          </div>
+
+          {relay && (
+            <p className="help" role="status">
+              {!relay.enabled
+                ? "Off. This computer is reachable on your local network only."
+                : relay.connected
+                  ? "On and connected. Create a pairing code above and scan it with your phone — the QR carries the relay address too."
+                  : relay.running
+                    ? `Connecting to the relay…${relay.last_error ? ` Last error: ${relay.last_error}` : ""}`
+                    : `Not connected.${relay.last_error ? ` ${relay.last_error}` : ""}`}
+            </p>
+          )}
+
+          {(relaySaveState.error ?? rotateState.error) && (
+            <p role="alert" className="error-text">
+              {relaySaveState.error ?? rotateState.error}
+            </p>
+          )}
+        </section>
+      )}
     </Dialog>
   );
 }

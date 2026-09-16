@@ -1,5 +1,6 @@
 // Protocol v1 client: canonical JSON, params hash, HMAC signature, request id,
 // nonce, expiry. Mirrors desktop/src/core/protocol.js exactly.
+import { open as openFrame, seal as sealFrame, type SealedFrame } from "./channel";
 import { hmacSha256, randomHex, sha256, uuid } from "./crypto";
 import type { DeviceCreds } from "../types";
 
@@ -90,14 +91,79 @@ interface Envelope {
 
 export const SESSION_ID = uuid();
 
+export interface RelayConfig {
+  url: string;
+  room: string;
+}
+
 export class AgentApi {
   baseUrl: string;
   creds: DeviceCreds | null;
   clockOffset = 0;
+  // When set, requests travel to the computer through the relay instead of over
+  // the local network. The envelope inside is identical and signed the same way;
+  // only the transport changes, so the agent cannot tell the difference except
+  // that it records the request as having arrived remotely.
+  relay: RelayConfig | null = null;
 
   constructor(baseUrl = "", creds: DeviceCreds | null = null) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.creds = creds;
+  }
+
+  get usingRelay(): boolean {
+    return this.relay !== null;
+  }
+
+  private relayBase(): string {
+    if (!this.relay) throw new AgentError(0, "network", "no relay configured");
+    return `${this.relay.url.replace(/\/$/, "")}/r/${this.relay.room}`;
+  }
+
+  // Is the computer currently connected to the relay? This is the honest
+  // offline signal for remote control: the relay knows when the agent last
+  // polled, and a computer that is off, asleep or disconnected stops polling.
+  async presence(signal?: AbortSignal): Promise<{ agent_online: boolean; last_seen_ms_ago: number | null }> {
+    const res = await this.fetch(`${this.relayBase()}/presence`, { method: "GET", ...(signal ? { signal } : {}) }, 10000);
+    if (!res.ok) throw new AgentError(res.status, "relay", "The relay did not answer.");
+    return (await res.json()) as { agent_online: boolean; last_seen_ms_ago: number | null };
+  }
+
+  private async callViaRelay<T>(name: string, env: Envelope, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+    if (!this.creds) throw new AgentError(401, "unauthorized", "This device is not paired.");
+    const sealed = await sealFrame(this.creds.secret, "to_agent", { path: name, body: env }, this.creds.id);
+    const res = await this.fetch(
+      `${this.relayBase()}/send`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sealed), ...(signal ? { signal } : {}) },
+      timeoutMs + 5000,
+    );
+    const text = await res.text();
+    let outer: { ok?: boolean; frame?: SealedFrame; error?: string; detail?: string } = {};
+    try {
+      outer = text ? (JSON.parse(text) as typeof outer) : {};
+    } catch {
+      outer = {};
+    }
+    if (!res.ok || !outer.frame) {
+      // These come from the relay itself, not the computer, so say so plainly
+      // rather than implying the command was refused.
+      if (outer.error === "agent_offline") throw new AgentError(503, "offline", "The computer is not connected. It may be off, asleep, or without internet.");
+      if (outer.error === "timeout") throw new AgentError(504, "timeout", "The computer did not answer in time.");
+      throw new AgentError(res.status || 502, outer.error ?? "relay", outer.detail ?? "The relay could not deliver the request.");
+    }
+    let inner: { status: number; body: unknown };
+    try {
+      inner = await openFrame<{ status: number; body: unknown }>(this.creds.secret, "to_device", outer.frame);
+    } catch {
+      // A reply that will not open was produced by something that does not hold
+      // the device secret. Never treat it as a result.
+      throw new AgentError(502, "tampered", "The reply from the computer could not be verified and was discarded.");
+    }
+    if (inner.status < 200 || inner.status >= 300) {
+      const b = (inner.body ?? {}) as { error?: string; detail?: string };
+      throw new AgentError(inner.status, b.error ?? "http", b.detail ?? b.error ?? `Request failed (${String(inner.status)})`);
+    }
+    return inner.body as T;
   }
 
   envelope(name: string, params: Record<string, unknown>, ttlMs: number): Envelope {
@@ -120,6 +186,7 @@ export class AgentApi {
   async call<T>(name: string, params: Record<string, unknown> = {}, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const env = this.envelope(name, params, Math.min(timeoutMs + 60000, 5 * 60000));
+    if (this.relay) return this.callViaRelay<T>(name, env, timeoutMs, opts.signal);
     const res = await this.fetch(`${this.baseUrl}/api/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(env), ...(opts.signal ? { signal: opts.signal } : {}) }, timeoutMs);
     const text = await res.text();
     let body: unknown = null;
@@ -173,6 +240,32 @@ export class AgentApi {
 }
 
 const STORAGE_KEY = "jarvis.device.v1";
+const RELAY_KEY = "jarvis.relay.v1";
+
+// The relay address and room id are routing information, not credentials: they
+// grant no authority on their own, because every command still has to carry a
+// signature made with the device secret. The secret itself is stored separately
+// and is never sent to the relay.
+export function loadRelay(): RelayConfig | null {
+  try {
+    const raw = localStorage.getItem(RELAY_KEY);
+    if (!raw) return null;
+    const r = JSON.parse(raw) as Partial<RelayConfig>;
+    if (typeof r.url === "string" && /^[a-f0-9]{32}$/.test(r.room ?? "")) return { url: r.url, room: r.room as string };
+  } catch {
+    /* storage unavailable */
+  }
+  return null;
+}
+
+export function saveRelay(relay: RelayConfig | null): void {
+  try {
+    if (relay) localStorage.setItem(RELAY_KEY, JSON.stringify(relay));
+    else localStorage.removeItem(RELAY_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 export function loadCreds(): DeviceCreds | null {
   try {
