@@ -5,6 +5,9 @@ import type { Panel } from "../state/jarvisStore";
 
 const PANELS: { id: Exclude<Panel, null>; label: string; icon: string }[] = [
   { id: "status", label: "Status", icon: "◉" },
+  { id: "voice", label: "Voice", icon: "🎙" },
+  { id: "alerts", label: "Customer alerts", icon: "⚠" },
+  { id: "phone", label: "Phone", icon: "☎" },
   { id: "projects", label: "Projects", icon: "⌬" },
   { id: "drafts", label: "Drafts", icon: "✉" },
   { id: "devices", label: "Devices", icon: "⌁" },
@@ -50,6 +53,7 @@ export function Header() {
                   : "Connected";
 
   const isOwner = useJarvis((s) => s.creds?.role) === "owner";
+  const openAlerts = useJarvis((s) => s.alerts.filter((a) => a.status === "open" || a.status === "acknowledged").length);
 
   return (
     <header className="header">
@@ -82,7 +86,16 @@ export function Header() {
 
         <nav className="panel-tabs" aria-label="Panels">
           {PANELS.map((p) => (
-            <button key={p.id} type="button" className="icon-btn" aria-pressed={panel === p.id} title={p.label} aria-label={p.label} onClick={() => { setPanel(panel === p.id ? null : p.id); }}>
+            <button
+              key={p.id}
+              type="button"
+              className="icon-btn"
+              data-badge={p.id === "alerts" && openAlerts > 0 ? String(openAlerts) : undefined}
+              aria-pressed={panel === p.id}
+              title={p.label}
+              aria-label={p.id === "alerts" && openAlerts > 0 ? `${p.label} (${String(openAlerts)} open)` : p.label}
+              onClick={() => { setPanel(panel === p.id ? null : p.id); }}
+            >
               <span aria-hidden="true">{p.icon}</span>
             </button>
           ))}

@@ -1,5 +1,6 @@
 import { AgentApi } from "./lib/protocol";
-import type { AiStatus, AppInfo, AuditEntry, DeviceInfo, Draft, DraftTemplate, Job, PairCode, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, Status, ToolInfo } from "./types";
+import { AgentError } from "./lib/protocol";
+import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus } from "./types";
 
 export const agentApi = new AgentApi("");
 
@@ -46,4 +47,60 @@ export const api = {
   project: (task_id: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/get", { task_id }),
   runProject: (task_id: string, hash: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/run", { task_id, hash }),
   cancelProject: (task_id: string) => agentApi.call<Ok<{ task: ProjectTask }>>("projects/cancel", { task_id }),
+
+  // --- voice ---------------------------------------------------------------
+  voiceStatus: (force = false) => agentApi.call<Ok<VoiceStatus>>("voice/status", { force }, { timeoutMs: 20000 }),
+  voiceMicrophone: (granted: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/microphone", { granted }),
+  voicePause: (paused: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/pause", { paused }),
+  voiceMute: (muted: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/mute", { muted }),
+  voiceDoneSpeaking: () => agentApi.call<Ok<VoiceStatus>>("voice/done-speaking"),
+  voiceHistory: (limit = 50) => agentApi.call<Ok<{ history: VoiceHistoryEntry[] }>>("voice/history", { limit }),
+  voiceUploadToken: () => agentApi.call<Ok<{ token: string }>>("voice/upload-token"),
+  /**
+   * The recording itself cannot travel inside the signed JSON envelope, so it
+   * is posted raw to a short-lived, single-purpose token endpoint. The audio
+   * never leaves this computer: the agent transcribes it locally and deletes
+   * the temporary file unless "keep audio" was explicitly turned on.
+   */
+  uploadUtterance: async (wav: Blob, durationMs: number, signal?: AbortSignal): Promise<UtteranceResult> => {
+    const { token } = await api.voiceUploadToken();
+    const res = await fetch(`/api/voice/utterance?token=${encodeURIComponent(token)}&ms=${String(Math.round(durationMs))}`, {
+      method: "POST",
+      headers: { "content-type": "audio/wav" },
+      body: wav,
+      cache: "no-store",
+      ...(signal ? { signal } : {}),
+    });
+    const body = (await res.json().catch(() => ({}))) as UtteranceResult & { error?: string; detail?: string; install?: SpeechEngineInstall | null };
+    if (!res.ok) {
+      const err = new AgentError(res.status, body.error ?? "voice_error", body.detail ?? "The recording could not be transcribed.");
+      (err as AgentError & { install?: SpeechEngineInstall | null }).install = body.install ?? null;
+      throw err;
+    }
+    return body;
+  },
+
+  // --- customer alerts -----------------------------------------------------
+  alerts: (all = false) => agentApi.call<Ok<{ alerts: CustomerAlert[]; label: string }>>("alerts/list", { all }),
+  alertHistory: (limit = 100) => agentApi.call<Ok<{ alerts: CustomerAlert[] }>>("alerts/history", { limit }),
+  scanAlerts: () => agentApi.call<Ok<{ raised: CustomerAlert[]; scanned: number; at: number }>>("alerts/scan", {}, { timeoutMs: 60000 }),
+  acknowledgeAlert: (id: string) => agentApi.call<Ok<{ alert: CustomerAlert }>>("alerts/acknowledge", { id }),
+  snoozeAlert: (id: string, minutes: number) => agentApi.call<Ok<{ alert: CustomerAlert }>>("alerts/snooze", { id, minutes }),
+  resolveAlert: (id: string) => agentApi.call<Ok<{ alert: CustomerAlert }>>("alerts/resolve", { id }),
+  retryAlert: (id: string) => agentApi.call<Ok<{ alert: CustomerAlert }>>("alerts/retry", { id }),
+  raiseAlert: (customer_id: string, headline?: string) => agentApi.call<Ok<{ alert: CustomerAlert }>>("alerts/raise", { customer_id, ...(headline ? { headline } : {}) }),
+  customers: () => agentApi.call<Ok<{ customers: Customer[] }>>("customers/list"),
+  saveCustomer: (customer: Partial<Customer>) => agentApi.call<Ok<{ customer: Customer }>>("customers/save", { customer }),
+  deleteCustomer: (id: string) => agentApi.call<Ok<{ deleted: boolean }>>("customers/delete", { id }),
+
+  // --- phone ---------------------------------------------------------------
+  phoneCapabilities: () => agentApi.call<Ok<PhoneCapabilities>>("phone/capabilities"),
+  requestCall: (params: { to: string; reason: string; customer_id?: string | null; simulate?: boolean }) => agentApi.call<Ok<{ call: CallRequest }>>("phone/request", { ...params }),
+  decideCall: (id: string, decision: "approve" | "reject", hash: string) => agentApi.call<Ok<{ call: CallRequest }>>("phone/decide", { id, decision, hash }),
+  dialerOpened: (id: string) => agentApi.call<Ok<{ call: CallRequest }>>("phone/dialer-opened", { id }),
+  callOutcome: (id: string, outcome: string, note?: string) => agentApi.call<Ok<{ call: CallRequest }>>("phone/outcome", { id, outcome, ...(note ? { note } : {}) }),
+  stopCall: (id: string) => agentApi.call<Ok<{ call: CallRequest }>>("phone/stop", { id }),
+  callNote: (id: string, text: string, speaker: "me" | "them") => agentApi.call<Ok<{ call: CallRequest }>>("phone/note", { id, text, speaker }),
+  callDraft: (id: string, text: string) => agentApi.call<Ok<{ call: CallRequest }>>("phone/draft", { id, text }),
+  calls: () => agentApi.call<Ok<{ calls: CallRequest[] }>>("phone/list"),
 };

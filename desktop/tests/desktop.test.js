@@ -36,7 +36,15 @@ test("main.js wires the required desktop behaviours", () => {
 test("preload exposes only the desktop bridge", () => {
   const preload = fs.readFileSync(path.join(ROOT, "preload.js"), "utf8");
   assert.match(preload, /contextBridge\.exposeInMainWorld\("jarvisDesktop"/);
-  assert.ok(!/ipcRenderer\.on\(/.test(preload), "no unrestricted event bridge");
+  // Listening is allowed, but only on channels named literally here: the page
+  // must never be able to hand in a channel of its own and listen to anything.
+  const ALLOWED_EVENTS = ["jarvis:alert-sound", "jarvis:speak"];
+  for (const m of preload.matchAll(/ipcRenderer\.on\(\s*([^,]+),/g)) {
+    const arg = m[1].trim();
+    assert.match(arg, /^"[^"]+"$/, `ipcRenderer.on must use a literal channel, got ${arg}`);
+    assert.ok(ALLOWED_EVENTS.includes(arg.slice(1, -1)), `unexpected event channel ${arg}`);
+  }
+  assert.ok(!/removeAllListeners|ipcRenderer\.(send|invoke)\(\s*[a-zA-Z]/.test(preload), "no unrestricted channel passthrough");
   for (const channel of ["owner-device", "agent-info", "open-path"]) assert.ok(preload.includes(channel), `missing ${channel}`);
   const handled = [...main.matchAll(/ipcMain\.handle\("([^"]+)"/g)].map((m) => m[1]);
   for (const channel of [...preload.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1])) {
@@ -49,4 +57,32 @@ test("packaging ships the UI and the agent, and nothing needs a key", () => {
   assert.ok(pkg.build.extraResources.some((r) => r.to === "client-dist"));
   for (const f of ["main.js", "preload.js", "headless.js", "src/**/*", "assets/**/*"]) assert.ok(pkg.build.files.includes(f), `missing ${f} in build.files`);
   assert.equal(pkg.build.win.target, "nsis");
+});
+
+test("the window may use the microphone and nothing else", () => {
+  assert.match(main, /setPermissionRequestHandler/, "permission requests must be answered deliberately");
+  assert.match(main, /setPermissionCheckHandler/);
+  assert.match(main, /setDevicePermissionHandler\(\(\) => false\)/, "no device (USB/serial/HID) access");
+  // Only "media" is ever granted, only for our own page, only audio, and only
+  // while voice is switched on.
+  assert.match(main, /permission === "media" \? allowMedia/);
+  assert.match(main, /mediaTypes\.includes\("video"\)\) return false/, "the camera is never granted");
+  assert.match(main, /config\.load\(\)\.voice\?\.enabled !== false/);
+  assert.match(main, /isOwnPage\(/, "a foreign origin must never get the microphone");
+});
+
+test("the alert sound and speech are asked of the window, and never faked when there is none", () => {
+  assert.match(main, /alertSound: \(\) =>[^\n]*sendToWindow\("jarvis:alert-sound"/);
+  assert.match(main, /speak: \(text\) =>[^\n]*throw new Error\("no window to speak from"\)/, "a missing window must not be recorded as spoken");
+  assert.match(main, /function sendToWindow/);
+  assert.match(main, /isDestroyed\(\)\) return false/);
+});
+
+test("the tray shows what the microphone is doing", () => {
+  assert.match(main, /VOICE_LABEL/);
+  assert.match(main, /mic \$\{VOICE_LABEL/, "the tooltip names the voice state");
+  assert.match(main, /Pause microphone/);
+  assert.match(main, /Mute JARVIS/);
+  assert.match(main, /customer alert\(s\)/);
+  assert.match(main, /voice\.state === "listening" \? "listening"/, "the listening icon means the microphone is actually open");
 });

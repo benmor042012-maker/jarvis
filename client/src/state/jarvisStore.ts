@@ -1,12 +1,15 @@
 import { create } from "zustand";
 
 import { agentApi, api } from "../api";
+import { MicCapture, micSupport } from "../lib/mic";
 import { AgentError, describeError, loadCreds, saveCreds } from "../lib/protocol";
-import type { AgentEvent, DeviceCreds, DeviceInfo, HealthResponse, Job, Plan, Settings, Status } from "../types";
+import { alertSound, sleepSound, stopSound, unlockAudio, wakeSound } from "../lib/sound";
+import { speak, stopSpeaking, warmVoices } from "../lib/speech";
+import type { AgentEvent, CallRequest, CustomerAlert, DeviceCreds, DeviceInfo, HealthResponse, Job, PhoneCapabilities, Plan, Settings, SpeechEngineInstall, Status, UtteranceResult, VoiceState, VoiceStatus } from "../types";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "busy" | "approval" | "success" | "error" | "offline" | "emergency";
 export type Connection = "connecting" | "online" | "offline" | "unpaired" | "unauthorized";
-export type Panel = null | "status" | "devices" | "tools" | "audit" | "projects" | "drafts" | "settings";
+export type Panel = null | "status" | "devices" | "tools" | "audit" | "projects" | "drafts" | "settings" | "voice" | "alerts" | "phone";
 export type LogKind = "user" | "assistant" | "action" | "system" | "error" | "warn";
 
 export interface LogEntry {
@@ -22,6 +25,10 @@ interface DesktopBridge {
   getOwnerDevice: () => Promise<DeviceCreds>;
   getAgentInfo: () => Promise<{ port: number; platform: string; version: string }>;
   openPath: (p: string) => Promise<{ ok: boolean; reason: string | null }>;
+  /** The desktop agent asks the window to play the alert sound. */
+  onAlertSound?: (cb: () => void) => () => void;
+  /** The desktop agent asks the window to speak, using local Windows voices. */
+  onSpeak?: (cb: (text: string) => void) => () => void;
 }
 
 export function desktopBridge(): DesktopBridge | null {
@@ -48,6 +55,28 @@ interface JarvisState {
   busy: boolean;
   approvalOpen: string | null;
 
+  // --- voice ---------------------------------------------------------------
+  voice: VoiceStatus | null;
+  /** The microphone is open in this page right now. */
+  listening: boolean;
+  /** 0..1 input meter, so "always listening" is never invisible. */
+  level: number;
+  micError: string | null;
+  micInstall: SpeechEngineInstall | null;
+  /** Why this browser/page cannot open a microphone at all, if it cannot. */
+  micBlocked: { reason: string; fix: string | null } | null;
+  ttsNote: string | null;
+  /** The typed fallback, hidden unless it is deliberately opened. */
+  keyboard: boolean;
+
+  // --- alerts and phone ----------------------------------------------------
+  alerts: CustomerAlert[];
+  alertLabel: string;
+  alertOpen: string | null;
+  calls: CallRequest[];
+  callOpen: string | null;
+  phone: PhoneCapabilities | null;
+
   addLog: (kind: LogKind, text: string, detail?: string) => void;
   clearLog: () => void;
   setPanel: (p: Panel) => void;
@@ -65,6 +94,19 @@ interface JarvisState {
   emergencyStop: () => Promise<void>;
   clearEmergency: () => Promise<void>;
   openApproval: (planId: string | null) => void;
+
+  refreshVoice: (force?: boolean) => Promise<void>;
+  startListening: () => Promise<void>;
+  stopListening: (tellAgent?: boolean) => Promise<void>;
+  setVoicePaused: (paused: boolean) => Promise<void>;
+  setVoiceMuted: (muted: boolean) => Promise<void>;
+  setKeyboard: (on: boolean) => void;
+  say: (text: string) => Promise<void>;
+
+  refreshAlerts: () => Promise<void>;
+  openAlert: (id: string | null) => void;
+  refreshPhone: () => Promise<void>;
+  openCall: (id: string | null) => void;
 }
 
 const STATUS: Record<OrbState, string> = {
@@ -107,6 +149,22 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   panel: null,
   busy: false,
   approvalOpen: null,
+
+  voice: null,
+  listening: false,
+  level: 0,
+  micError: null,
+  micInstall: null,
+  micBlocked: null,
+  ttsNote: null,
+  keyboard: false,
+
+  alerts: [],
+  alertLabel: "LOCAL WI-FI ALERTS — NO EXTERNAL MESSAGES",
+  alertOpen: null,
+  calls: [],
+  callOpen: null,
+  phone: null,
 
   addLog: (kind, text, detail) => {
     set((s) => ({ log: [...s.log.slice(-299), { id: nextId(), kind, text, at: Date.now(), ...(detail ? { detail } : {}) }] }));
@@ -313,7 +371,255 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     get().addLog("system", "Emergency stop cleared.");
     deriveOrb();
   },
+
+  // --- voice -----------------------------------------------------------------
+  refreshVoice: async (force = false) => {
+    const voice = await api.voiceStatus(force);
+    set({ voice });
+    applyVoiceState(voice.state);
+  },
+
+  startListening: async () => {
+    const support = micSupport();
+    if (!support.supported) {
+      set({ micBlocked: { reason: support.reason ?? "The microphone is not available here.", fix: support.fix } });
+      get().addLog("warn", support.reason ?? "The microphone is not available here.", support.fix ?? undefined);
+      return;
+    }
+    set({ micBlocked: null, micError: null });
+    unlockAudio();
+    warmVoices();
+    try {
+      await capture().start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The microphone could not be opened.";
+      set({ micError: message, listening: false });
+      get().addLog("error", message);
+      // The agent must not claim to be listening when the browser refused.
+      try {
+        if (get().creds?.role === "owner") set({ voice: await api.voiceMicrophone(false) });
+      } catch {
+        /* the agent will report its own state on the next poll */
+      }
+      return;
+    }
+    set({ listening: true });
+    try {
+      // Only the JARVIS computer itself can grant the microphone; a paired
+      // phone can speak, but it cannot switch listening on for the computer.
+      if (get().creds?.role === "owner") set({ voice: await api.voiceMicrophone(true) });
+      else set({ voice: await api.voiceStatus() });
+    } catch (err) {
+      get().addLog("error", describeError(err));
+    }
+    applyVoiceState(get().voice?.state ?? "standby");
+  },
+
+  stopListening: async (tellAgent = true) => {
+    capture().stop();
+    stopSpeaking();
+    set({ listening: false, level: 0 });
+    if (!tellAgent) return;
+    try {
+      if (get().creds?.role === "owner") set({ voice: await api.voiceMicrophone(false) });
+    } catch (err) {
+      get().addLog("error", describeError(err));
+    }
+    applyVoiceState(get().voice?.state ?? "off");
+  },
+
+  setVoicePaused: async (paused) => {
+    const voice = await api.voicePause(paused);
+    set({ voice });
+    get().addLog("system", paused ? "Microphone paused. JARVIS is not listening." : "Microphone resumed.");
+    applyVoiceState(voice.state);
+  },
+
+  setVoiceMuted: async (muted) => {
+    const voice = await api.voiceMute(muted);
+    set({ voice });
+    if (muted) stopSpeaking();
+    get().addLog("system", muted ? "Muted: JARVIS will not speak or listen." : "Unmuted.");
+    applyVoiceState(voice.state);
+  },
+
+  setKeyboard: (on) => {
+    set({ keyboard: on });
+  },
+
+  say: async (text) => {
+    const s = get();
+    const speakReplies = (s.settings?.tts.enabled ?? true) && (s.settings?.voice.speakReplies ?? true);
+    if (!speakReplies || s.voice?.muted) {
+      await api.voiceDoneSpeaking().catch(() => undefined);
+      return;
+    }
+    const lang = s.settings?.tts.lang ?? (s.settings?.language === "en" ? "en-US" : "he-IL");
+    const res = await speak(text, lang);
+    if (!res.spoken && res.reason && get().ttsNote !== res.reason) {
+      set({ ttsNote: res.reason });
+      get().addLog("warn", res.reason, res.fix ?? undefined);
+    }
+    try {
+      set({ voice: await api.voiceDoneSpeaking() });
+    } catch {
+      /* the next status poll corrects this */
+    }
+  },
+
+  // --- alerts and phone ------------------------------------------------------
+  refreshAlerts: async () => {
+    const r = await api.alerts();
+    set({ alerts: r.alerts, alertLabel: r.label });
+    const open = r.alerts.find((a) => a.status === "open");
+    if (open && !get().alertOpen) set({ alertOpen: open.id });
+  },
+
+  openAlert: (id) => {
+    set({ alertOpen: id });
+  },
+
+  refreshPhone: async () => {
+    const [caps, list] = await Promise.all([api.phoneCapabilities(), api.calls()]);
+    set({ phone: caps, calls: list.calls });
+    const waiting = list.calls.find((c) => c.status === "pending_approval");
+    if (waiting && !get().callOpen) set({ callOpen: waiting.id });
+  },
+
+  openCall: (id) => {
+    set({ callOpen: id });
+  },
 }));
+
+// --- microphone ---------------------------------------------------------------
+let mic: MicCapture | null = null;
+let uploading = false;
+let queued: { wav: Blob; ms: number } | null = null;
+let levelAt = 0;
+
+function capture(): MicCapture {
+  mic ??= new MicCapture({
+    maxSegmentMs: 15000,
+    silenceMs: 900,
+    minSpeechMs: 260,
+    onSegment: (wav, ms) => {
+      // One upload at a time; a newer utterance replaces a waiting one so a
+      // stop phrase is never stuck behind an old recording.
+      queued = { wav, ms };
+      void drainUploads();
+    },
+    onLevel: (level) => {
+      const now = Date.now();
+      if (now - levelAt < 120) return;
+      levelAt = now;
+      const rounded = Math.round(level * 20) / 20;
+      if (useJarvis.getState().level !== rounded) useJarvis.setState({ level: rounded });
+    },
+    onError: (message) => {
+      useJarvis.setState({ micError: message });
+    },
+  });
+  return mic;
+}
+
+export function micCapture(): MicCapture {
+  return capture();
+}
+
+async function drainUploads(): Promise<void> {
+  if (uploading) return;
+  uploading = true;
+  try {
+    while (queued) {
+      const item = queued;
+      queued = null;
+      try {
+        const res = await api.uploadUtterance(item.wav, item.ms);
+        await handleUtterance(res);
+      } catch (err) {
+        const install = (err as AgentError & { install?: SpeechEngineInstall | null }).install ?? null;
+        const s = useJarvis.getState();
+        const message = err instanceof AgentError ? err.message : describeError(err);
+        if (s.micError !== message) {
+          useJarvis.setState({ micError: message, micInstall: install });
+          s.addLog("error", message);
+        }
+        if (install) {
+          // Nothing will ever be transcribed until the engine is installed;
+          // stop recording instead of uploading audio that cannot be read.
+          capture().stop();
+          useJarvis.setState({ listening: false, level: 0 });
+          void s.refreshVoice(true).catch(() => undefined);
+          return;
+        }
+      }
+    }
+  } finally {
+    uploading = false;
+  }
+}
+
+async function handleUtterance(res: UtteranceResult): Promise<void> {
+  const s = useJarvis.getState();
+  useJarvis.setState({ micError: null });
+  switch (res.action) {
+    case "ignored":
+      // Silence, background talk, a false wake or quiet hours. Never logged as
+      // a transcript: only the agent keeps that, and only as text.
+      if (res.reason === "quiet_hours" && res.detail && !s.log.some((l) => l.text === res.detail)) s.addLog("system", res.detail);
+      return;
+    case "stopped": {
+      stopSound();
+      stopSpeaking();
+      capture().discard();
+      s.addLog("warn", `Stopped by voice ("${res.phrase ?? ""}"). No model was used — the word alone stops everything.`);
+      await s.refreshStatus().catch(() => undefined);
+      return;
+    }
+    case "woke": {
+      wakeSound();
+      s.setOrb("listening");
+      return;
+    }
+    case "command": {
+      if (res.text) s.addLog("user", res.text);
+      const plan = res.plan;
+      if (!plan) return;
+      useJarvis.setState({ lastPlan: plan });
+      s.addLog("assistant", plan.message, plan.notes.length ? plan.notes.join("\n") : undefined);
+      for (const note of plan.notes) {
+        if (!useJarvis.getState().log.some((l) => l.kind === "warn" && l.text === note)) s.addLog("warn", note);
+      }
+      if (plan.suggest === "drafts" || plan.suggest === "projects") useJarvis.setState({ panel: plan.suggest });
+      if (needsApproval(plan)) {
+        useJarvis.setState({ pendingPlans: upsert(useJarvis.getState().pendingPlans, plan), approvalOpen: plan.plan_id });
+        deriveOrb();
+        await s.say(plan.message);
+        return;
+      }
+      s.setOrb("speaking");
+      const speaking = s.say(plan.message);
+      if (res.job) await followJob(res.job);
+      await speaking;
+      sleepSound();
+      deriveOrb();
+      return;
+    }
+  }
+}
+
+/** Mirror the agent's voice state onto the orb without fighting deriveOrb(). */
+function applyVoiceState(state: VoiceState): void {
+  const s = useJarvis.getState();
+  if (s.status?.emergency || s.pendingPlans.length) {
+    deriveOrb();
+    return;
+  }
+  if (state === "listening") s.setOrb("listening");
+  else if (state === "thinking") s.setOrb("thinking");
+  else if (state === "speaking") s.setOrb("speaking");
+  else deriveOrb();
+}
 
 function needsApproval(plan: Plan): boolean {
   // Every command produces a plan event, including ones with nothing to run
@@ -411,6 +717,14 @@ async function connectLoop(): Promise<void> {
     } catch {
       /* ignore */
     }
+    const st = useJarvis.getState();
+    await Promise.all([
+      st.refreshVoice().catch(() => undefined),
+      st.refreshAlerts().catch(() => undefined),
+      st.refreshPhone().catch(() => undefined),
+    ]);
+    const support = micSupport();
+    useJarvis.setState(support.supported ? { micBlocked: null } : { micBlocked: { reason: support.reason ?? "", fix: support.fix } });
     if (!useJarvis.getState().log.some((l) => l.kind === "system" && l.text.startsWith("Connected"))) {
       useJarvis.getState().addLog("system", `Connected to JARVIS ${status.version} on this ${status.host === "desktop" ? "computer's desktop agent" : "headless agent"} · mode ${status.mode.toUpperCase()}${status.offline_mode ? " · OFFLINE MODE" : ""}.`);
     }
@@ -469,7 +783,7 @@ async function openEvents(): Promise<void> {
     }
     onEvent(ev);
   };
-  for (const type of ["status", "plan", "job", "reminder", "devices", "project", "progress"]) es.addEventListener(type, handle as EventListener);
+  for (const type of ["status", "plan", "job", "reminder", "devices", "project", "progress", "voice_state", "voice", "alert", "call"]) es.addEventListener(type, handle as EventListener);
   es.addEventListener("ping", () => {
     useJarvis.setState({ lastSeen: Date.now() });
   });
@@ -516,6 +830,76 @@ function onEvent(ev: AgentEvent): void {
     case "progress":
       window.dispatchEvent(new CustomEvent("jarvis-event", { detail: ev }));
       break;
+    case "voice_state": {
+      const voice = s.voice;
+      if (voice) useJarvis.setState({ voice: { ...voice, state: ev.state } });
+      applyVoiceState(ev.state);
+      break;
+    }
+    case "voice":
+      // The transcript itself is logged by the utterance handler on the device
+      // that spoke; other devices only learn that JARVIS woke or was stopped.
+      if (ev.event === "stopped" && !s.listening) s.addLog("warn", "JARVIS was stopped by voice on another device.");
+      break;
+    case "alert":
+      onAlert(ev.alert);
+      break;
+    case "call": {
+      const calls = [ev.call, ...s.calls.filter((c) => c.id !== ev.call.id)].slice(0, 50);
+      useJarvis.setState({ calls });
+      if (ev.call.status === "pending_approval" && !s.callOpen) useJarvis.setState({ callOpen: ev.call.id });
+      if (s.callOpen === ev.call.id && (ev.call.status === "rejected" || ev.call.status === "stopped" || ev.call.status === "expired" || ev.call.status === "closed")) useJarvis.setState({ callOpen: null });
+      break;
+    }
+  }
+}
+
+function onAlert(alert: CustomerAlert): void {
+  const s = useJarvis.getState();
+  const alerts = [alert, ...s.alerts.filter((a) => a.id !== alert.id)];
+  useJarvis.setState({ alerts, alertLabel: alert.label });
+  if (alert.status !== "open") {
+    if (s.alertOpen === alert.id) useJarvis.setState({ alertOpen: null });
+    return;
+  }
+  useJarvis.setState({ alertOpen: alert.id });
+  s.addLog("warn", `⚠ ${alert.customer_name} — ${alert.headline}`, alert.label);
+  // On the JARVIS computer the desktop agent itself owns the notification, the
+  // sound and the speech, so the page would only duplicate them. Everywhere
+  // else — a paired phone, or a browser talking to a headless agent — the page
+  // is the only thing that can deliver them.
+  if (desktopBridge() || alert.quiet_hours) return;
+  const channels = s.settings?.alerts.channels;
+  if (channels?.sound !== false) alertSound();
+  if (channels?.notification !== false) showNotification(alert);
+  if (channels?.speech) void speakAlert(alert);
+}
+
+export function speakAlert(alert: CustomerAlert): Promise<unknown> {
+  const s = useJarvis.getState();
+  const he = (s.settings?.language ?? "he") === "he";
+  // Names only. The reason, the note and the contact details stay on screen
+  // unless "speak details" was deliberately switched on.
+  const full = s.settings?.alerts.speakDetails === true;
+  const text = full
+    ? he ? `שים לב: ${alert.customer_name}. ${alert.headline}.` : `Attention: ${alert.customer_name}. ${alert.headline}.`
+    : he ? `שים לב, לקוח דורש תשומת לב: ${alert.customer_name}.` : `Attention: a customer needs you — ${alert.customer_name}.`;
+  return speak(text, s.settings?.tts.lang ?? (he ? "he-IL" : "en-US"));
+}
+
+export function showNotification(alert: CustomerAlert): void {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    // Local only: this is the browser's own notification, shown by the phone
+    // or the browser that is already connected over your Wi-Fi. Nothing is
+    // sent to any messaging service, and no push server is involved.
+    new Notification(`JARVIS — ${alert.customer_name}`, {
+      body: useJarvis.getState().settings?.alerts.speakDetails === true ? alert.headline : "A customer needs your attention. Open JARVIS to see why.",
+      tag: alert.id,
+      icon: "./favicon.svg",
+    });
+  } catch {
+    /* some browsers require a service-worker registration for notifications */
   }
 }
 

@@ -7,7 +7,10 @@ const path = require("path");
 const { Agent } = require("./src/core/agent");
 
 async function main() {
-  const agent = new Agent({ host: { notify: (title, body) => console.log(`[reminder] ${title}: ${body}`) } });
+  // No window, so no Web Audio and no speech synthesis: an alert prints here
+  // and reaches every connected JARVIS page, which is what plays the sound and
+  // speaks. The alert record says which channels actually fired.
+  const agent = new Agent({ host: { notify: (title, body) => console.log(`[notify] ${title}: ${body}`) } });
   const info = await agent.start({ staticRoot: path.join(__dirname, "..", "client", "dist") });
   const owner = agent.ownerDevice();
   const code = agent.devices.createPairCode();
@@ -15,6 +18,7 @@ async function main() {
   console.log(`Owner device id: ${owner.id}`);
   console.log(`Pairing code (5 minutes): ${code.code}`);
   console.log("High-risk actions cannot be confirmed in headless mode. Start the desktop app for full features.");
+  console.log("Voice: open this address in Chrome or Edge on this computer — the microphone is opened by the page, not by this process.");
   const stop = () => { agent.stop(); process.exit(0); };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);

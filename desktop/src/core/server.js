@@ -126,6 +126,42 @@ class Server {
     r("projects/get", async ({ params }) => { const t = A.projects.get(String(params.task_id || "")); if (!t) throw httpError(404, "unknown task"); return { task: t }; });
     r("projects/run", async ({ params, device }) => { const res = A.projects.run(String(params.task_id || ""), { hash: String(params.hash || ""), device }); if (!res.ok) throw httpError(res.status, res.reason); return { task: res.task }; });
     r("projects/cancel", async ({ params }) => { const t = A.projects.cancel(String(params.task_id || "")); if (!t) throw httpError(404, "unknown task"); return { task: t }; });
+
+    // --- voice -----------------------------------------------------------
+    r("voice/status", async ({ params }) => A.voice.status({ force: !!params.force }));
+    r("voice/microphone", async ({ params, device }) => { A.voice.setMicGranted(!!params.granted); audit.log({ event: "microphone_permission", device: device?.name, detail: { granted: !!params.granted } }); return A.voice.status(); }, { owner: true });
+    r("voice/pause", async ({ params }) => { A.voice.setPaused(!!params.paused); return A.voice.status(); });
+    r("voice/mute", async ({ params }) => { A.voice.setMuted(!!params.muted); return A.voice.status(); });
+    r("voice/done-speaking", async () => { A.voice.doneSpeaking(); return A.voice.status(); });
+    r("voice/history", async ({ params }) => ({ history: A.voice.history.slice(-Math.min(200, Number(params.limit) || 50)).reverse() }));
+    // The audio itself is uploaded to /api/voice/utterance (below) — it is
+    // binary and would not survive the JSON envelope.
+    r("voice/upload-token", async ({ device }) => ({ token: this._shortToken(device.id, "voice", 60000) }));
+
+    // --- customer alerts --------------------------------------------------
+    r("alerts/list", async ({ params }) => ({ alerts: A.alerts.list({ includeResolved: !!params.all }), label: require("./alerts").LABEL }));
+    r("alerts/history", async ({ params }) => ({ alerts: A.alerts.history(Math.min(500, Number(params.limit) || 100)) }));
+    r("alerts/scan", async ({ device }) => A.alerts.scan({ device, force: true }));
+    r("alerts/acknowledge", async ({ params, device }) => { const a = A.alerts.acknowledge(String(params.id || ""), { device }); if (!a) throw httpError(404, "unknown alert"); return { alert: a }; });
+    r("alerts/snooze", async ({ params, device }) => { const a = A.alerts.snooze(String(params.id || ""), params.minutes, { device }); if (!a) throw httpError(404, "unknown alert"); return { alert: a }; });
+    r("alerts/resolve", async ({ params, device }) => { const a = A.alerts.resolve(String(params.id || ""), { device }); if (!a) throw httpError(404, "unknown alert"); return { alert: a }; });
+    r("alerts/retry", async ({ params, device }) => { const a = A.alerts.retry(String(params.id || ""), { device }); if (!a) throw httpError(404, "unknown alert"); return { alert: a }; });
+    r("alerts/raise", async ({ params, device }) => ({ alert: A.alerts.raiseManual({ customer_id: String(params.customer_id || ""), headline: params.headline }, { device }) }));
+    r("customers/list", async () => ({ customers: A.alerts.customers() }));
+    r("customers/save", async ({ params, device }) => ({ customer: A.alerts.upsertCustomer(params.customer || {}, { device }) }));
+    r("customers/delete", async ({ params, device }) => ({ deleted: A.alerts.removeCustomer(String(params.id || ""), { device }) }));
+
+    // --- phone ------------------------------------------------------------
+    r("phone/capabilities", async () => A.phone.capabilities({ devices: A.devices.list() }));
+    r("phone/request", async ({ params, device }) => ({ call: A.phone.request({ to: params.to, reason: params.reason, customer_id: params.customer_id || null, simulate: !!params.simulate }, { device, devices: A.devices.list() }) }));
+    r("phone/decide", async ({ params, device }) => ({ call: A.phone.decide(String(params.id || ""), { decision: params.decision === "approve" ? "approve" : "reject", hash: String(params.hash || ""), device }) }));
+    r("phone/dialer-opened", async ({ params, device }) => ({ call: A.phone.dialerOpened(String(params.id || ""), { device }) }));
+    r("phone/outcome", async ({ params, device }) => ({ call: A.phone.setOutcome(String(params.id || ""), { outcome: String(params.outcome || ""), note: params.note, device }) }));
+    r("phone/stop", async ({ params, device }) => { const c = A.phone.stop(String(params.id || ""), { device }); if (!c) throw httpError(404, "unknown call"); return { call: c }; });
+    r("phone/note", async ({ params, device }) => ({ call: A.phone.addTranscript(String(params.id || ""), { text: params.text, speaker: params.speaker, device }) }));
+    r("phone/draft", async ({ params }) => ({ call: A.phone.setDraft(String(params.id || ""), params.text) }));
+    r("phone/list", async () => ({ calls: A.phone.list() }));
+    r("phone/answer", async () => { A.phone.answerIncoming(); });
   }
 
   _shortToken(deviceId, purpose, ttl) {
@@ -181,6 +217,7 @@ class Server {
         this.agent.emit("event", { type: "devices", at: nowMs(), devices: this.agent.devices.list() });
         return json(res, 200, { device_id: d.id, secret: d.secret, name: d.name, role: d.role, expires_at: d.expires_at, protocol: 1 });
       }
+      if (p === "/api/voice/utterance" && req.method === "POST") return await this._utterance(req, res, url, ip);
       if (p === "/api/events" && req.method === "GET") return this._sse(req, res, url);
       if (p === "/api/files/screenshot" && req.method === "GET") return this._screenshot(req, res, url);
       if (p.startsWith("/preview/") && req.method === "GET") return this._preview(req, res, url);
@@ -225,12 +262,54 @@ class Server {
     return json(res, 200, { ok: true, request_id: v.envelope.id, ...result }, cors || {});
   }
 
+  /**
+   * One captured utterance, as a raw WAV body.
+   *
+   * It is authorised by a short-lived token from voice/upload-token rather than
+   * the JSON envelope, because the body is binary. The audio is transcribed on
+   * this computer and the temporary file is deleted straight after.
+   */
+  async _utterance(req, res, url, ip) {
+    const device = this._useShortToken(url.searchParams.get("token"), "voice");
+    if (!device) return json(res, 401, { error: "unauthorized", detail: "voice token missing or expired" });
+    if (this.agent.devices.rateLimited(device.id, 240)) return json(res, 429, { error: "rate_limited" });
+    const max = 8 * 1024 * 1024; // ~4 minutes of 16 kHz mono PCM
+    const chunks = [];
+    let size = 0;
+    try {
+      await new Promise((resolve, reject) => {
+        req.on("data", (c) => {
+          size += c.length;
+          if (size > max) { reject(Object.assign(new Error("recording too large"), { status: 413 })); req.destroy(); return; }
+          chunks.push(c);
+        });
+        req.on("end", resolve);
+        req.on("error", reject);
+      });
+    } catch (e) {
+      return json(res, e.status || 400, { error: "bad_request", detail: e.message });
+    }
+    const wav = Buffer.concat(chunks);
+    this.agent.devices.touch(device.id, ip);
+    try {
+      const out = await this.agent.voice.handleUtterance(wav, {
+        durationMs: Number(url.searchParams.get("ms")) || 0,
+        device,
+        source: device.role === "owner" ? "window" : "phone",
+      });
+      return json(res, 200, { ok: true, ...out });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.code || "voice_error", detail: redact(String(e.message || e)).slice(0, 500), install: e.install || null });
+    }
+  }
+
   _sse(req, res, url) {
     const device = this._useShortToken(url.searchParams.get("token"), "events", { consume: true });
     if (!device) return json(res, 401, { error: "unauthorized", detail: "events token missing, used or expired" });
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
     res.write(`: connected\n\n`);
-    const client = { res, device_id: device.id, since: nowMs() };
+    const client = { res, device_id: device.id, role: device.role, since: nowMs() };
     this.sseClients.add(client);
     this.agent.devices.touch(device.id, req.socket.remoteAddress);
     const ping = setInterval(() => { try { res.write(`event: ping\ndata: ${nowMs()}\n\n`); this.agent.devices.touch(device.id); } catch { /* closed */ } }, 15000);
@@ -246,7 +325,20 @@ class Server {
   }
 
   broadcast(event) {
-    for (const c of this.sseClients) this._send(c, event);
+    // "Alert my phones" is a setting, so an alert only reaches paired devices
+    // when it is on. Everything else goes to every connected device.
+    const phonesOff = event.type === "alert" && this.agent.cfg().alerts?.channels?.phone === false;
+    for (const c of this.sseClients) {
+      if (phonesOff && c.role !== "owner") continue;
+      this._send(c, event);
+    }
+  }
+
+  /** Paired devices other than this computer that are connected right now. */
+  connectedRemotes() {
+    const ids = new Set();
+    for (const c of this.sseClients) if (c.role !== "owner") ids.add(c.device_id);
+    return ids.size;
   }
 
   _dropSse(deviceId) {
