@@ -30,6 +30,21 @@ function getCtor(): SpeechRecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+/**
+ * Why speech is unavailable here, or null when it works.
+ *
+ * The constructor exists inside the JARVIS desktop window but always fails:
+ * stock Electron ships without the speech service the API depends on, so it
+ * aborts with a misleading "network" error. Rather than offer a button that
+ * can only fail, say what actually works — the same UI in Chrome or Edge.
+ */
+export function speechUnavailableReason(): string | null {
+  const isDesktopWindow = "jarvisDesktop" in window;
+  if (isDesktopWindow) return "Voice input does not work inside the JARVIS window: Electron has no speech recognition service. Open this same page in Chrome or Edge (http://127.0.0.1:8765) to talk to JARVIS.";
+  if (getCtor() === null) return "This browser has no speech recognition. Chrome and Edge support it; Firefox and Safari do not.";
+  return null;
+}
+
 interface Options {
   lang?: string;
   onResult: (text: string) => void;
@@ -43,7 +58,7 @@ const ERRORS: Record<string, string> = {
   "service-not-allowed": "Speech recognition is not available in this browser.",
   "no-speech": "I didn't hear anything.",
   "audio-capture": "No microphone was found.",
-  network: "Speech recognition needs a network connection in this browser.",
+  network: "Speech recognition could not reach the browser's speech service. In Chrome/Edge this usually means no internet; JARVIS itself keeps working offline — type instead.",
 };
 
 /**
@@ -53,7 +68,8 @@ const ERRORS: Record<string, string> = {
 export function useSpeechRecognition({ lang = "en-US", onResult, onStart, onEnd, onError }: Options) {
   const [listening, setListening] = useState(false);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
-  const supported = typeof window !== "undefined" && getCtor() !== null;
+  const unavailable = typeof window === "undefined" ? "Not a browser." : speechUnavailableReason();
+  const supported = unavailable === null;
 
   const cbs = useRef({ onResult, onStart, onEnd, onError });
   useEffect(() => {
@@ -111,5 +127,5 @@ export function useSpeechRecognition({ lang = "en-US", onResult, onStart, onEnd,
     [],
   );
 
-  return { supported, listening, start, stop };
+  return { supported, unavailable, listening, start, stop };
 }

@@ -23,6 +23,14 @@ npm start         # פותח את ג'רביס
 דרוש Node.js 18+. בינה מלאכותית מקומית היא אופציונלית: אם יש Ollama או LocalAI — ג'רביס משתמש בהם;
 אם אין — הוא אומר **MOCK MODE** במפורש ועובר למתכנן כללים דטרמיניסטי, בלי להעמיד פנים.
 
+להתקנת המוח המקומי בפקודה אחת (חינם, בלי חשבון ובלי מפתח):
+
+```
+npm run ai
+```
+
+הוא בודק אם Ollama מותקן ורץ, ממליץ על מודל לפי הזיכרון של המחשב, ומוריד אותו.
+
 | מצב | מה מותר |
 |---|---|
 | **Safe** | קריאה בלבד, פעולות הפיכות |
@@ -112,6 +120,7 @@ connected state.
 
 ```bash
 npm run setup           # install + build + test
+npm run ai              # optional: install the local AI brain (Ollama + a model)
 npm start               # desktop agent (or headless if Electron is missing)
 npm run headless        # agent without a window (Linux/servers/CI)
 npm test                # agent test suite
@@ -140,6 +149,9 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- Voice input does **not** work inside the JARVIS window: stock Electron ships without a speech
+  recognition service. The mic button there is disabled and says so. Open the same page
+  (`http://127.0.0.1:8765`) in Chrome or Edge to talk to JARVIS — Hebrew recognition works there.
 - Headless mode cannot show the native second confirmation, so high-risk plans approved remotely
   are refused there rather than run unconfirmed.
 - Local models are smaller than hosted assistants: they can misunderstand and are slower. Every plan

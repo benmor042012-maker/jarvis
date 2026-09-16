@@ -27,3 +27,60 @@ test("model JSON extraction tolerates fences and prose", () => {
   assert.throws(() => extractJson("no json here"));
   assert.match(systemPrompt([{ name: "t", risk: "low", description: "d", schema: { properties: {} } }], "he"), /Hebrew/);
 });
+
+test("project requests route to the builder in Hebrew and English", () => {
+  for (const c of ["תעשה לי אתר בשביל מסעדה אטלקית", "בנה לי אתר", "תכין לי דף נחיתה", "אני רוצה אפליקציה לניהול לקוחות", "צור לי אתר תדמית", "build me a website for a bakery", "make an api for orders", "i want a mobile app", "design a landing page"]) {
+    assert.equal(rulePlan(c).suggest, "projects", c);
+  }
+});
+
+test("project routing does not swallow ordinary commands", () => {
+  const untouched = [
+    ["open notepad", "open_app"],
+    ["פתח פנקס רשימות", "open_app"],
+    ["create file a.txt with hi", "write_file"],
+    ["צור קובץ רשימה.txt עם חלב", "write_file"],
+    ["חפש קובץ אתר", "search_files"],
+    ["delete old.txt", "delete_file"],
+  ];
+  for (const [cmd, tool] of untouched) {
+    const p = rulePlan(cmd);
+    assert.equal(p.suggest ?? null, null, cmd);
+    assert.equal(p.actions[0]?.tool, tool, cmd);
+  }
+  assert.equal(rulePlan("תעשה לי קפה").unknown, true);
+});
+
+test("Hebrew prepositions attach to the next word, with or without a hyphen", () => {
+  // ל / ב are prefixes in Hebrew — "לbackup.txt", "ל-backup.txt", "במסמכים" —
+  // so a rule that demands a space after them never matches real typing.
+  const expect = (cmd, tool, params) => {
+    const p = rulePlan(cmd);
+    assert.equal(p.actions[0]?.tool, tool, `${cmd} -> ${JSON.stringify(p)}`);
+    for (const [k, v] of Object.entries(params)) assert.equal(p.actions[0].params[k], v, `${cmd} .${k}`);
+  };
+  expect("העבר את אתר.txt ל-backup.txt", "move_file", { from: "אתר.txt", to: "backup.txt" });
+  expect("העבר את a.txt לb.txt", "move_file", { from: "a.txt", to: "b.txt" });
+  expect("העבר את a.txt ל b.txt", "move_file", { from: "a.txt", to: "b.txt" });
+  expect("חפש חשבונית במסמכים", "search_files", { query: "חשבונית", folder: "מסמכים" });
+  expect("חפש חשבונית בתיקיית מסמכים", "search_files", { query: "חשבונית", folder: "תיקיית מסמכים" });
+  expect("חפש חשבונית", "search_files", { query: "חשבונית", folder: "" });
+  expect("קבע פגישה ב-2030-01-02", "create_calendar_draft", { title: "פגישה", start_iso: "2030-01-02" });
+  expect("קבע רופא שיניים בתאריך 2030-01-02", "create_calendar_draft", { title: "רופא שיניים" });
+  expect("היכנס ל-youtube", "open_url", { url: "https://www.youtube.com" });
+  expect("גש לגוגל", "open_url", { url: "https://www.google.com" });
+  expect("הצג קבצים בתיקייה projects", "list_files", { folder: "projects" });
+});
+
+test("the English equivalents keep working", () => {
+  const expect = (cmd, tool, params) => {
+    const p = rulePlan(cmd);
+    assert.equal(p.actions[0]?.tool, tool, `${cmd} -> ${JSON.stringify(p)}`);
+    for (const [k, v] of Object.entries(params)) assert.equal(p.actions[0].params[k], v, `${cmd} .${k}`);
+  };
+  expect("move a.txt to b.txt", "move_file", { from: "a.txt", to: "b.txt" });
+  expect("rename old.txt to new.txt", "move_file", { from: "old.txt", to: "new.txt" });
+  expect("search for invoice in docs", "search_files", { query: "invoice", folder: "docs" });
+  expect("schedule dentist at 2030-01-02", "create_calendar_draft", { title: "dentist" });
+  expect("create file website.txt with hi", "write_file", { path: "website.txt", content: "hi" });
+});
