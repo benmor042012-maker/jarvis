@@ -38,7 +38,16 @@ function runInstaller(env, timeoutMs = 60000) {
 }
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-install-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-install-"));
+  // Windows hands out the same folder under two spellings: the 8.3 short name
+  // (C:\Users\RUNNER~1\...) and the long one. The agent canonicalises its home
+  // on purpose, so a test that held on to the short spelling would be comparing
+  // two names for one folder and failing on Windows only.
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
 }
 
 /** A model file is "ggml" plus enough bytes to not look like an error page. */
