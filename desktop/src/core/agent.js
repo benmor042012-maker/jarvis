@@ -131,8 +131,10 @@ class Agent extends EventEmitter {
     const calls = this.phone.stopAll(source);
     this.voice.reset("emergency_stop");
     const killed = procs.killAll();
-    this.state.emergencyStop(source);
+    // Set the source first: stopping the state machine emits the status event
+    // straight away, and that event has to name what stopped everything.
     this.emergencySource = source;
+    this.state.emergencyStop(source);
     audit.log({ event: "emergency_stop", detail: { source, cancelled_jobs: cancelled, killed_processes: killed, stopped_calls: calls } });
     if (typeof this.host.onEmergencyStop === "function") { try { this.host.onEmergencyStop(source); } catch { /* ignore */ } }
     return { cancelled_jobs: cancelled, killed_processes: killed, stopped_calls: calls };

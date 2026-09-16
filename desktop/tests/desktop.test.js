@@ -86,3 +86,28 @@ test("the tray shows what the microphone is doing", () => {
   assert.match(main, /customer alert\(s\)/);
   assert.match(main, /voice\.state === "listening" \? "listening"/, "the listening icon means the microphone is actually open");
 });
+
+test("closing the window leaves the agent running in the tray", () => {
+  // Three separate things have to hold, and all three are easy to break by
+  // accident: the close is cancelled, the window only hides, and no path from
+  // closing reaches agent.stop().
+  const close = /mainWindow\.on\("close"[\s\S]*?\n  \}\);/.exec(main);
+  assert.ok(close, "the close handler must exist");
+  assert.match(close[0], /if \(quitting\) return;/, "closing must still work when the user chose Quit");
+  assert.match(close[0], /e\.preventDefault\(\);/, "closing must not end the process");
+  assert.match(close[0], /mainWindow\.hide\(\);/, "closing hides the window");
+  assert.ok(!/agent\??\.stop\(\)/.test(close[0]), "closing must never stop the agent");
+
+  const allClosed = /app\.on\("window-all-closed"[^\n]*\n?/.exec(main);
+  assert.ok(allClosed && /keep running/.test(allClosed[0]), "the app must not quit when the last window closes");
+  assert.ok(!/agent\??\.stop\(\)/.test(allClosed[0]));
+
+  // The agent is only ever stopped by quitting deliberately.
+  const stops = [...main.matchAll(/agent\??\.stop\(\)/g)].map((m) => main.slice(Math.max(0, m.index - 260), m.index));
+  assert.ok(stops.length > 0, "quitting must stop the agent");
+  for (const context of stops) {
+    assert.ok(/quitApp|will-quit/.test(context), `agent.stop() reached from something other than quitting: …${context.slice(-120)}`);
+  }
+  // And the tray says so the first time, so nobody thinks JARVIS is gone.
+  assert.match(main, /JARVIS keeps running/);
+});

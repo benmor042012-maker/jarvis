@@ -15,6 +15,7 @@
     "test": "npm --prefix desktop test",
     "lint": "npm --prefix client run lint",
     "typecheck": "npm --prefix client run typecheck",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "e2e": "node scripts/e2e.mjs"
   }
 }
