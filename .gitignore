@@ -6,4 +6,5 @@ desktop/dist/
 .DS_Store
 .venv/
 .wrangler/
-server/data/
+__pycache__/
+*.pyc
