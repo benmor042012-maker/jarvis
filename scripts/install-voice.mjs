@@ -112,6 +112,45 @@ function manualSteps() {
   console.log("");
 }
 
+/** Half a second of silence — enough for the engine to start, load the model and answer. */
+function silentWav(ms = 500, rate = 16000) {
+  const samples = Math.round((ms / 1000) * rate);
+  const b = Buffer.alloc(44 + samples * 2);
+  b.write("RIFF", 0, "ascii");
+  b.writeUInt32LE(36 + samples * 2, 4);
+  b.write("WAVE", 8, "ascii");
+  b.write("fmt ", 12, "ascii");
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24);
+  b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write("data", 36, "ascii");
+  b.writeUInt32LE(samples * 2, 40);
+  return b;
+}
+
+/**
+ * Put a real recording through the real engine. Silence transcribes to nothing,
+ * which is a fine answer — what matters is that it started, loaded the model and
+ * came back instead of dying.
+ */
+async function runsForReal() {
+  try {
+    await stt.transcribe(silentWav(), { cfg: config.load(), language: "he", timeoutMs: 180000 });
+    return true;
+  } catch (e) {
+    bad(e.message);
+    console.log(`\n  ${C.dim}The files are installed, but the program itself will not run, so JARVIS still cannot hear you.${C.r}`);
+    if (e.exit !== undefined) console.log(`  ${C.dim}Exit code: ${String(e.exit)}${C.r}`);
+    console.log(`  ${C.dim}Try it yourself to see the whole message:${C.r}`);
+    console.log(`     ${C.b}"${config.load().voice.whisperPath}" --help${C.r}\n`);
+    return false;
+  }
+}
+
 // --- run --------------------------------------------------------------------
 const ramGb = Math.max(1, Math.round(os.totalmem() / GB));
 console.log(`\n${C.b}JARVIS — speech recognition setup${C.r} ${C.dim}(free, open source, offline once installed)${C.r}`);
@@ -143,7 +182,7 @@ try {
       fs.rmSync(zip, { force: true });
       throw new Error("The download unpacked, but there is no whisper program inside it. Nothing was installed.");
     }
-    const { installed, files } = installFrom(found, SPEECH_DIR);
+    const { installed, files } = installFrom(found, SPEECH_DIR, { tree: staging });
     fs.rmSync(staging, { recursive: true, force: true });
     fs.rmSync(zip, { force: true });
     binary = installed;
@@ -187,12 +226,16 @@ try {
   config.update({ voice: { enabled: true, whisperPath: binary, whisperModel: modelFile } });
   stt.resetCache();
 
-  // 4. Ask JARVIS itself. Anything else would be this script telling you it worked.
-  say("Asking JARVIS whether it can hear you now…");
+  // 4. Actually run it. Finding the files only proves they are on the disk —
+  // a program that cannot start (a missing library beside it, a build this
+  // processor cannot run) looks exactly the same until something tries it.
+  say("Checking that the engine really runs…");
   const d = await stt.detect(config.load(), { force: true });
   if (!d.available) {
     bad(`JARVIS still cannot use it: ${d.reason ?? "unknown reason"}`);
     manualSteps();
+    exitCode = 1;
+  } else if (!(await runsForReal())) {
     exitCode = 1;
   } else if (!d.hebrew) {
     warn(`The engine works, but ${path.basename(d.model)} is the English-only build, so Hebrew will not work.`);

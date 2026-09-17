@@ -139,7 +139,7 @@ export function findBinary(dir, names) {
  * not start without the DLLs shipped next to it, and a lone .exe would look
  * installed and then fail on the first word you say.
  */
-export function installFrom(binary, into, { chmod = process.platform !== "win32" } = {}) {
+export function installFrom(binary, into, { chmod = process.platform !== "win32", tree = null } = {}) {
   const from = path.dirname(binary);
   fs.mkdirSync(into, { recursive: true });
   const files = [];
@@ -147,6 +147,17 @@ export function installFrom(binary, into, { chmod = process.platform !== "win32"
     if (!e.isFile()) continue;
     fs.copyFileSync(path.join(from, e.name), path.join(into, e.name));
     files.push(e.name);
+  }
+  // Some releases keep the executables in a subfolder and the libraries at the
+  // root of the zip. A program installed without them starts and dies without
+  // printing anything, so sweep the whole unpacked tree for libraries too.
+  if (tree) {
+    for (const lib of findLibraries(tree)) {
+      const name = path.basename(lib);
+      if (files.includes(name)) continue;
+      fs.copyFileSync(lib, path.join(into, name));
+      files.push(name);
+    }
   }
   const installed = path.join(into, path.basename(binary));
   if (chmod) {
@@ -157,6 +168,27 @@ export function installFrom(binary, into, { chmod = process.platform !== "win32"
     }
   }
   return { installed, files };
+}
+
+/** Every shared library anywhere under `dir` — .dll, .so or .dylib. */
+export function findLibraries(dir) {
+  const out = [];
+  const stack = [dir];
+  while (stack.length) {
+    const d = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (/\.(dll|so|dylib)$/i.test(e.name)) out.push(full);
+    }
+  }
+  return out;
 }
 
 /** Is this actually a GGML model, or an error page wearing its name? */

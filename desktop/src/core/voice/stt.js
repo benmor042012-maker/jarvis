@@ -203,7 +203,7 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
       if (res.timedOut) throw Object.assign(new Error("Local transcription timed out."), { status: 504 });
-      if (res.code !== 0) throw Object.assign(new Error(`The speech engine failed: ${(res.stderr || res.stdout).trim().slice(0, 300)}`), { status: 500 });
+      if (res.code !== 0) throw engineFailure(res, d);
       const txtFile = file.replace(/\.wav$/, ".txt");
       let text = "";
       try {
@@ -230,6 +230,36 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       try { fs.unlinkSync(file); } catch { /* already gone */ }
     }
   }
+}
+
+/**
+ * Why the engine failed, in words that lead somewhere.
+ *
+ * A program that dies without printing anything is the common Windows case —
+ * usually a missing DLL next to the executable, or a build the processor
+ * cannot run. "The speech engine failed:" followed by nothing tells the user
+ * nothing at all, so there is always an exit code and a likely cause here.
+ */
+function engineFailure(res, d) {
+  const said = String(res.stderr || res.stdout || "").trim();
+  const code = res.code;
+  if (said) {
+    return Object.assign(new Error(`The speech engine failed (exit ${String(code)}): ${said.slice(0, 300)}`), { status: 500, code: "speech_engine_failed", exit: code });
+  }
+  // Windows uses these for "could not load" rather than printing anything.
+  const loader = code === 3221225781 || code === -1073741515; // STATUS_DLL_NOT_FOUND
+  const illegal = code === 3221225501 || code === -1073741795; // STATUS_ILLEGAL_INSTRUCTION
+  const why = loader
+    ? `${path.basename(d.binary)} could not start because a library it needs is missing from ${path.dirname(d.binary)}. The whisper.cpp download ships .dll files that must sit next to the program.`
+    : illegal
+      ? `${path.basename(d.binary)} was built for a newer processor than this one and cannot run here.`
+      : `${path.basename(d.binary)} stopped with exit code ${String(code)} without printing anything, which usually means it could not start at all — most often a missing library beside it.`;
+  const e = new Error(`The speech engine failed: ${why}`);
+  e.status = 500;
+  e.code = "speech_engine_failed";
+  e.exit = code;
+  e.install = INSTALL_STEPS.whisper;
+  return e;
 }
 
 function cleanup(text) {
