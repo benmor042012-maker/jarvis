@@ -18,11 +18,30 @@ function whisperCandidates(cfg) {
   const home = paths.HOME;
   const names = IS_WIN ? ["whisper-cli.exe", "main.exe", "whisper.exe"] : ["whisper-cli", "main", "whisper"];
   const dirs = [path.join(home, "speech"), path.join(home, "whisper"), path.join(os.homedir(), "whisper.cpp"), path.join(os.homedir(), "whisper.cpp", "build", "bin")];
-  const out = configured ? [configured] : [];
+  // A configured path wins, except for one trap: recent whisper.cpp releases
+  // ship main.exe as a stub that says "the binary 'main.exe' is deprecated,
+  // please use 'whisper-cli.exe' instead" and exits 1. An install done before
+  // that change wrote main.exe into the config, so prefer the working program
+  // beside it rather than failing on every word the user says.
+  const out = configured ? preferSupported(configured) : [];
   for (const d of dirs) for (const n of names) out.push(path.join(d, n));
   // Also whatever is on PATH.
   out.push(IS_WIN ? "whisper-cli.exe" : "whisper-cli");
   return out;
+}
+
+// The deprecated stub, and the program that replaced it.
+const DEPRECATED = IS_WIN ? ["main.exe", "whisper.exe"] : ["main", "whisper"];
+
+function preferSupported(configured) {
+  if (!DEPRECATED.includes(path.basename(configured).toLowerCase())) return [configured];
+  const replacement = path.join(path.dirname(configured), IS_WIN ? "whisper-cli.exe" : "whisper-cli");
+  try {
+    if (fs.statSync(replacement).isFile()) return [replacement, configured];
+  } catch {
+    /* it is not there; the configured one is all we have */
+  }
+  return [configured];
 }
 
 function modelCandidates(cfg) {
@@ -243,6 +262,16 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
 function engineFailure(res, d) {
   const said = String(res.stderr || res.stdout || "").trim();
   const code = res.code;
+  // whisper.cpp's own words for "you are running the retired program". It never
+  // transcribes anything, so echoing the warning alone would leave the user
+  // reading a deprecation notice with nothing to do about it.
+  if (/\bdeprecated\b/i.test(said) && /whisper-cli/i.test(said)) {
+    const e = new Error(`The speech engine failed: ${path.basename(d.binary)} is the retired whisper.cpp program and only prints a deprecation notice. The one to use is ${IS_WIN ? "whisper-cli.exe" : "whisper-cli"} in ${path.dirname(d.binary)}. If it is not there, run  npm run voice  to fetch it (free, no account).`);
+    e.status = 500;
+    e.code = "speech_engine_failed";
+    e.exit = code;
+    return e;
+  }
   if (said) {
     return Object.assign(new Error(`The speech engine failed (exit ${String(code)}): ${said.slice(0, 300)}`), { status: 500, code: "speech_engine_failed", exit: code });
   }

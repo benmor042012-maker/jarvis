@@ -56,3 +56,47 @@ test("a long complaint from the engine is trimmed, not dropped", () => {
   assert.ok(e.message.length < 400, `the message must stay readable, got ${String(e.message.length)}`);
   assert.match(e.message, /x{50}/, "but it still carries what the engine said");
 });
+
+// Reported from a real machine: after the missing Visual C++ libraries were
+// installed, the engine finally started — and exited 1 with
+// "WARNING: The binary 'main.exe' is deprecated. Please use 'whisper-cli.exe'
+// instead." The install was complete and JARVIS still could not hear a word,
+// because the installer had picked the retired program out of the folder.
+test("the retired main.exe is named for what it is, with the program to use instead", () => {
+  const deprecated = { ...ENGINE, binary: path.join(path.dirname(ENGINE.binary), "main.exe") };
+  const e = stt.engineFailure({
+    code: 1,
+    stdout: "",
+    stderr: "WARNING: The binary 'main.exe' is deprecated.\n Please use 'whisper-cli.exe' instead.\n",
+  }, deprecated);
+  assert.match(e.message, /main\.exe/, e.message);
+  assert.match(e.message, /whisper-cli/, "it names the program that does work");
+  assert.ok(e.message.includes(path.dirname(deprecated.binary)), "and the folder to find it in");
+  assert.match(e.message, /npm run voice/, "and the free step when it is not there");
+  assert.equal(e.exit, 1);
+});
+
+test("a configured main.exe is replaced by the whisper-cli.exe beside it", async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-stt-"));
+  const name = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
+  const stale = path.join(dir, process.platform === "win32" ? "main.exe" : "main");
+  try {
+    fs.writeFileSync(stale, "x");
+    const model = path.join(dir, "ggml-small.bin");
+    fs.writeFileSync(model, "ggml");
+    const cfg = { voice: { whisperPath: stale, whisperModel: model } };
+
+    // On its own, the configured path is all there is.
+    let d = await stt.detect(cfg, { force: true });
+    assert.equal(d.binary, stale);
+
+    // With the supported program beside it, that one is used instead.
+    fs.writeFileSync(path.join(dir, name), "x");
+    d = await stt.detect(cfg, { force: true });
+    assert.equal(d.binary, path.join(dir, name));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -120,6 +120,37 @@ test("the right Windows build is picked out of a release list, and a release wit
   assert.equal(pickWindowsAsset(null), null);
 });
 
+test("a release holding both programs yields whisper-cli, never the retired main", async () => {
+  // Reported from a real machine: the install completed, and the engine it had
+  // chosen was main.exe — which in current whisper.cpp only prints "the binary
+  // 'main.exe' is deprecated, please use 'whisper-cli.exe' instead" and exits
+  // 1. Both files sit in the same release, so which one is found first is down
+  // to the order the folder is listed in; preference has to be explicit.
+  const { findBinary, WINDOWS_BIN_NAMES, UNIX_BIN_NAMES } = await import(LIB);
+  const dir = tmp();
+  try {
+    for (const [names, stub, wanted] of [[WINDOWS_BIN_NAMES, "main.exe", "whisper-cli.exe"], [UNIX_BIN_NAMES, "main", "whisper-cli"]]) {
+      const box = path.join(dir, wanted);
+      fs.mkdirSync(path.join(box, "bin"), { recursive: true });
+      // The retired one shallower than the supported one, so a plain
+      // first-match search would take it.
+      fs.writeFileSync(path.join(box, stub), "x");
+      fs.writeFileSync(path.join(box, "bin", wanted), "x");
+      assert.equal(path.basename(findBinary(box, names)), wanted);
+
+      // And when the retired program is genuinely all there is, it is still
+      // better than refusing to install anything.
+      const only = path.join(dir, `only-${stub}`);
+      fs.mkdirSync(only, { recursive: true });
+      fs.writeFileSync(path.join(only, stub), "x");
+      assert.equal(path.basename(findBinary(only, names)), stub);
+    }
+    assert.equal(findBinary(path.join(dir, "nothing-here"), WINDOWS_BIN_NAMES), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a complete download is kept; a truncated one is thrown away", async () => {
   const { download } = await import(LIB);
   const dir = tmp();

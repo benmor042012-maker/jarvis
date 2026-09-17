@@ -113,10 +113,19 @@ export async function download(url, dest, { label = "download", onProgress, stal
   return size;
 }
 
-/** Depth-first search for a whisper program inside an unpacked release. */
+/**
+ * Search for a whisper program inside an unpacked release, and return the most
+ * preferred name rather than whichever one the folder listing happened to hand
+ * over first. The order matters: recent whisper.cpp releases still ship a
+ * main.exe, but it is a stub that prints "the binary 'main.exe' is deprecated,
+ * please use 'whisper-cli.exe' instead" and exits 1. A folder holding both must
+ * yield whisper-cli, or the install looks complete and nothing can transcribe.
+ */
 export function findBinary(dir, names) {
   const wanted = (names ?? [...WINDOWS_BIN_NAMES, ...UNIX_BIN_NAMES]).map((n) => n.toLowerCase());
   const stack = [dir];
+  let best = null;
+  let bestRank = Infinity;
   while (stack.length) {
     const d = stack.pop();
     let entries = [];
@@ -127,11 +136,19 @@ export function findBinary(dir, names) {
     }
     for (const e of entries) {
       const full = path.join(d, e.name);
-      if (e.isDirectory()) stack.push(full);
-      else if (wanted.includes(e.name.toLowerCase())) return full;
+      if (e.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      const rank = wanted.indexOf(e.name.toLowerCase());
+      if (rank !== -1 && rank < bestRank) {
+        best = full;
+        bestRank = rank;
+        if (rank === 0) return best; // nothing can beat the first choice
+      }
     }
   }
-  return null;
+  return best;
 }
 
 /**
