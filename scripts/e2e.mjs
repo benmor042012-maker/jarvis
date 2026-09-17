@@ -224,6 +224,10 @@ try {
   const phoneDevice = agent.devices.create({ name: "phone-e2e", role: "remote" });
   const phone = await openPage(phoneDevice);
   await phone.page.waitForSelector(".voice-main");
+  // The page being drawn is not the same as its event stream being open, and an
+  // alert is delivered live with no replay. Ask the agent when the phone is
+  // really connected, otherwise the alert can be raised into a closed door.
+  await until("the phone's event stream to reach the agent", () => agent.server.connectedRemotes() >= 1, 20000);
   agent.alerts.upsertCustomer({ name: "דנה כהן", phone: "050-123-4567", lastMessage: "זה דחוף, אני מחכה כבר שבוע" });
   await agent.alerts.scan({ force: true });
   await until("the alert on this computer", () => page.isVisible("text=Customer needs attention"));

@@ -270,4 +270,4 @@ function cleanup(text) {
     .trim();
 }
 
-module.exports = { detect, transcribe, resetCache, isWav, cleanup, INSTALL_STEPS };
+module.exports = { detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
