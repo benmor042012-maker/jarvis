@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 
 const SCRIPTS = path.join(__dirname, "..", "..", "scripts");
+const ROOT = path.join(__dirname, "..", "..");
 
 test("no launcher pairs an args array with shell:true", () => {
   for (const file of fs.readdirSync(SCRIPTS).filter((f) => f.endsWith(".mjs"))) {
@@ -56,4 +57,58 @@ test("npm run ai is wired and the model table is coherent", () => {
   // The smallest option must be last so low-RAM machines still get a choice.
   const needs = [...text.matchAll(/needsGb: (\d+)/g)].map((m) => Number(m[1]));
   assert.deepEqual(needs, [...needs].sort((a, b) => b - a), "models should be listed from most to least demanding");
+});
+
+test("started detached, the agent outlives the window that launched it", async () => {
+  // The bug this pins: JARVIS ran as a child of the console that started it, so
+  // closing that console killed the tray agent. The launcher must hand the
+  // agent off, confirm it is answering, and then exit on its own.
+  const { spawn } = require("child_process");
+  const os = require("os");
+  const net = require("net");
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-detach-"));
+  const port = await new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on("error", reject);
+    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => { resolve(p); }); });
+  });
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ server: { port, lanEnabled: false } }));
+
+  const launcher = spawn(process.execPath, [path.join(ROOT, "scripts", "start.mjs"), "--headless", "--detached"], {
+    env: { ...process.env, JARVIS_HOME: home },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  launcher.stdout.on("data", (c) => { out += c; });
+  launcher.stderr.on("data", (c) => { out += c; });
+
+  const exitCode = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { launcher.kill("SIGKILL"); reject(new Error(`the launcher never exited. Output:\n${out}`)); }, 60000);
+    launcher.on("close", (code) => { clearTimeout(timer); resolve(code); });
+  });
+
+  let agentPid = 0;
+  try {
+    assert.equal(exitCode, 0, out);
+    // It only claims success after asking the agent, so the message is evidence.
+    assert.match(out, /JARVIS is running/, out);
+    assert.match(out, /close this window/i, "it must say the window is safe to close");
+    const pid = /process (\d+)/.exec(out);
+    assert.ok(pid, `the launcher must report the process it handed off to. Output:\n${out}`);
+    agentPid = Number(pid[1]);
+
+    // The launcher is gone; the agent must still be answering.
+    const res = await fetch(`http://127.0.0.1:${String(port)}/api/health`, { cache: "no-store" });
+    assert.equal(res.ok, true, "the agent died with its launcher");
+    const health = await res.json();
+    assert.equal(health.ok, true);
+
+    // And it is genuinely a different process from the one that exited.
+    assert.notEqual(agentPid, launcher.pid);
+    assert.doesNotThrow(() => process.kill(agentPid, 0), "the handed-off process must still be alive");
+  } finally {
+    if (agentPid) { try { process.kill(agentPid, "SIGKILL"); } catch { /* already gone */ } }
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

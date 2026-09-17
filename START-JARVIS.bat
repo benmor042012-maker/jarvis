@@ -29,9 +29,15 @@ if not exist "client\dist\index.html" (
   )
 )
 
-call npm start
+REM --detached so JARVIS keeps running once this window is gone. Without it the
+REM agent is a child of this console and closing the window kills the tray app.
+call npm start -- --detached
 if errorlevel 1 (
   echo.
-  echo   [X] JARVIS stopped with an error. Read the message above.
+  echo   [X] JARVIS did not start. Read the message above.
   pause
+  exit /b 1
 )
+
+echo   You can close this window - JARVIS stays in the tray.
+timeout /t 6 >nul
