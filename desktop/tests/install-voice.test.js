@@ -214,28 +214,32 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
     "/ggml-small.bin": (_req, res) => { res.writeHead(200, { "content-length": String(model.length) }).end(model); },
   });
   try {
-    const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base });
+    // A dead release address, so no test can ever reach the real internet.
+    const env = { JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" };
+
+    if (isWin) {
+      // Windows will not run a script named .exe, so the stand-in cannot start.
+      // The installer must treat that as "not installed" and try to replace it,
+      // rather than trusting a program it was never able to run.
+      const w = await runInstaller(env, 60000, /Looking for the latest/i);
+      assert.ok(!/Ready\./.test(w.out), `it must not say Ready for an engine it could not run:\n${w.out}`);
+      assert.match(w.out, /cannot start/i, w.out);
+      return;
+    }
+
+    const r = await runInstaller(env);
     const out = r.out;
-    assert.match(out, /speech engine is already here/);
+    assert.match(out, /speech engine is already here, and it runs/, out);
     assert.match(out, /Model installed: ggml-small\.bin/);
     // Finding the files is not the claim — running the engine is.
     assert.match(out, /Checking that the engine really runs/);
+    assert.equal(r.status, 0, out);
+    assert.match(out, /Ready\./, out);
+    assert.match(out, /Hebrew: yes/);
+    assert.match(out, /תתעורר/, "it must end by telling you what to say");
 
-    if (isWin) {
-      // On Windows the stand-in cannot execute at all — Node will not spawn a
-      // script named .exe — and that is the point worth asserting: the
-      // installer must refuse to promise anything it could not actually run.
-      assert.equal(r.status, 1, out);
-      assert.ok(!/Ready\./.test(out), "it must not say Ready when the engine will not run");
-    } else {
-      assert.equal(r.status, 0, out);
-      assert.match(out, /Ready\./, out);
-      assert.match(out, /Hebrew: yes/);
-      assert.match(out, /תתעורר/, "it must end by telling you what to say");
-    }
-
-    // Either way it wrote the two paths into the config rather than leaving
-    // detection to guesswork, and the model really is on disk.
+    // It wrote the two paths into the config rather than leaving detection to
+    // guesswork, and the model really is on disk.
     const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
     assert.equal(cfg.voice.whisperModel, path.join(speech, "ggml-small.bin"));
     assert.equal(path.basename(cfg.voice.whisperPath), binName);
@@ -263,7 +267,7 @@ test("a model that never arrives is refused, and the manual steps are printed", 
     "/ggml-small.bin": (_req, res) => { res.writeHead(200, { "content-length": String(junk.length) }).end(junk); },
   });
   try {
-    const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base });
+    const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" });
     const out = r.out;
     assert.equal(r.status, 1, "a failed install must not report success");
     assert.match(out, /not a speech model/);
