@@ -68,6 +68,26 @@ function fakeModel(size = 2 * 1024 * 1024) {
   return b;
 }
 
+/**
+ * Put a program in the speech folder that really does start, so a test about a
+ * later step is not stopped by the engine check. A file with batch text in it
+ * named .exe cannot run on Windows, so there the stand-in is a copy of the Node
+ * binary running this test: it answers --help and exits 0, which is all the
+ * installer asks of an engine. Returns the file name it used.
+ */
+function workingEngine(speech) {
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
+  const dest = path.join(speech, binName);
+  if (isWin) {
+    fs.copyFileSync(process.execPath, dest);
+  } else {
+    fs.writeFileSync(dest, "#!/bin/sh\necho usage\n");
+    fs.chmodSync(dest, 0o755);
+  }
+  return binName;
+}
+
 async function serve(routes) {
   const server = http.createServer((req, res) => {
     const route = routes[req.url.split("?")[0]];
@@ -98,6 +118,37 @@ test("the right Windows build is picked out of a release list, and a release wit
   assert.equal(pickWindowsAsset([{ tag_name: "v2", assets: [{ name: "readme.txt", browser_download_url: "x" }] }]), null);
   assert.equal(pickWindowsAsset([]), null);
   assert.equal(pickWindowsAsset(null), null);
+});
+
+test("a release holding both programs yields whisper-cli, never the retired main", async () => {
+  // Reported from a real machine: the install completed, and the engine it had
+  // chosen was main.exe — which in current whisper.cpp only prints "the binary
+  // 'main.exe' is deprecated, please use 'whisper-cli.exe' instead" and exits
+  // 1. Both files sit in the same release, so which one is found first is down
+  // to the order the folder is listed in; preference has to be explicit.
+  const { findBinary, WINDOWS_BIN_NAMES, UNIX_BIN_NAMES } = await import(LIB);
+  const dir = tmp();
+  try {
+    for (const [names, stub, wanted] of [[WINDOWS_BIN_NAMES, "main.exe", "whisper-cli.exe"], [UNIX_BIN_NAMES, "main", "whisper-cli"]]) {
+      const box = path.join(dir, wanted);
+      fs.mkdirSync(path.join(box, "bin"), { recursive: true });
+      // The retired one shallower than the supported one, so a plain
+      // first-match search would take it.
+      fs.writeFileSync(path.join(box, stub), "x");
+      fs.writeFileSync(path.join(box, "bin", wanted), "x");
+      assert.equal(path.basename(findBinary(box, names)), wanted);
+
+      // And when the retired program is genuinely all there is, it is still
+      // better than refusing to install anything.
+      const only = path.join(dir, `only-${stub}`);
+      fs.mkdirSync(only, { recursive: true });
+      fs.writeFileSync(path.join(only, stub), "x");
+      assert.equal(path.basename(findBinary(only, names)), stub);
+    }
+    assert.equal(findBinary(path.join(dir, "nothing-here"), WINDOWS_BIN_NAMES), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a complete download is kept; a truncated one is thrown away", async () => {
@@ -256,9 +307,7 @@ test("a model that never arrives is refused, and the manual steps are printed", 
   const speech = path.join(home, "speech");
   fs.mkdirSync(speech, { recursive: true });
   const isWin = process.platform === "win32";
-  const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
-  fs.writeFileSync(path.join(speech, binName), isWin ? "@echo off\necho usage\n" : "#!/bin/sh\necho usage\n");
-  if (!isWin) fs.chmodSync(path.join(speech, binName), 0o755);
+  workingEngine(speech);
 
   // Serves an HTML error page under the model's name — the failure a proxy or a
   // rate limit actually produces.

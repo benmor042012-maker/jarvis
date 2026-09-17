@@ -169,12 +169,29 @@ const move_file = {
   },
 };
 
+// Two files with the same name can reach the trash inside the same millisecond
+// (an overwrite backup followed at once by a delete). The timestamp alone would
+// then name both the same and the second copy would erase the first, which is
+// exactly the version the user may want back. Claim the name first, and add a
+// counter when it is taken.
 function trashCopy(file) {
   fs.mkdirSync(paths.TRASH, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dest = path.join(paths.TRASH, `${stamp}-${path.basename(file)}`);
+  const base = path.basename(file);
+  let dest = path.join(paths.TRASH, `${stamp}-${base}`);
+  for (let n = 2; !claim(dest); n += 1) {
+    if (n > 1000) throw new Error("The trash folder already holds too many copies of this name.");
+    dest = path.join(paths.TRASH, `${stamp}-${n}-${base}`);
+  }
+  fs.rmSync(dest, { force: true });
   fs.cpSync(file, dest, { recursive: true });
   return dest;
+}
+
+// wx fails if the name is taken, so the check and the claim cannot race.
+function claim(dest) {
+  try { fs.closeSync(fs.openSync(dest, "wx")); return true; }
+  catch (e) { if (e.code === "EEXIST") return false; throw e; }
 }
 
 const delete_file = {
