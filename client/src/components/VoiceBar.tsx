@@ -48,8 +48,18 @@ export function VoiceBar() {
   const setVoicePaused = useJarvis((s) => s.setVoicePaused);
   const setVoiceMuted = useJarvis((s) => s.setVoiceMuted);
   const emergencyStop = useJarvis((s) => s.emergencyStop);
+  const heard = useJarvis((s) => s.heard);
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  // The "heard" line is only useful while it is recent, so a tick retires it
+  // instead of leaving a stale transcript on screen.
+  useEffect(() => {
+    if (!heard) return;
+    const t = window.setInterval(() => { setNow(Date.now()); }, 1000);
+    return () => { window.clearInterval(t); };
+  }, [heard]);
 
   // The browser stops delivering audio when the tab is frozen; reflect that
   // rather than showing a listening indicator that is no longer true.
@@ -120,6 +130,13 @@ export function VoiceBar() {
             {listening && <span className="mic-dot" aria-hidden="true" />}
           </strong>
           <p>{hint}</p>
+          {listening && heard && now - heard.at < 20000 && (state === "standby" || state === "quiet_hours") && (
+            <p className="voice-heard">
+              {heard.text
+                ? <>Heard <q>{heard.text}</q> — that is not the wake phrase.</>
+                : <>Something was heard, but no words came back from the speech engine. Speak a little closer, or check that Windows is using the microphone you are speaking into.</>}
+            </p>
+          )}
         </div>
 
         <div className="voice-actions">

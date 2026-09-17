@@ -61,6 +61,10 @@ interface JarvisState {
   listening: boolean;
   /** 0..1 input meter, so "always listening" is never invisible. */
   level: number;
+  // What the last utterance came back as when it was not for JARVIS. Without
+  // this, saying the wake phrase and having it misheard looks identical to a
+  // dead microphone: the screen says nothing either way.
+  heard: { text: string; at: number } | null;
   micError: string | null;
   micInstall: SpeechEngineInstall | null;
   /** Why this browser/page cannot open a microphone at all, if it cannot. */
@@ -153,6 +157,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   voice: null,
   listening: false,
   level: 0,
+  heard: null,
   micError: null,
   micInstall: null,
   micBlocked: null,
@@ -565,8 +570,12 @@ async function handleUtterance(res: UtteranceResult): Promise<void> {
   switch (res.action) {
     case "ignored":
       // Silence, background talk, a false wake or quiet hours. Never logged as
-      // a transcript: only the agent keeps that, and only as text.
+      // a transcript: only the agent keeps that, and only as text. It is still
+      // shown on the voice bar for a few seconds, because "I said the wake
+      // phrase and nothing happened" has to be answerable: either the words
+      // came back wrong, or nothing was heard at all.
       if (res.reason === "quiet_hours" && res.detail && !s.log.some((l) => l.text === res.detail)) s.addLog("system", res.detail);
+      useJarvis.setState({ heard: { text: (res.text ?? "").trim(), at: Date.now() } });
       return;
     case "stopped": {
       stopSound();
@@ -577,6 +586,7 @@ async function handleUtterance(res: UtteranceResult): Promise<void> {
       return;
     }
     case "woke": {
+      useJarvis.setState({ heard: null });
       wakeSound();
       s.setOrb("listening");
       return;
