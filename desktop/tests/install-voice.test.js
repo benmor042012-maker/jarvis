@@ -68,6 +68,26 @@ function fakeModel(size = 2 * 1024 * 1024) {
   return b;
 }
 
+/**
+ * Put a program in the speech folder that really does start, so a test about a
+ * later step is not stopped by the engine check. A file with batch text in it
+ * named .exe cannot run on Windows, so there the stand-in is a copy of the Node
+ * binary running this test: it answers --help and exits 0, which is all the
+ * installer asks of an engine. Returns the file name it used.
+ */
+function workingEngine(speech) {
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
+  const dest = path.join(speech, binName);
+  if (isWin) {
+    fs.copyFileSync(process.execPath, dest);
+  } else {
+    fs.writeFileSync(dest, "#!/bin/sh\necho usage\n");
+    fs.chmodSync(dest, 0o755);
+  }
+  return binName;
+}
+
 async function serve(routes) {
   const server = http.createServer((req, res) => {
     const route = routes[req.url.split("?")[0]];
@@ -256,9 +276,7 @@ test("a model that never arrives is refused, and the manual steps are printed", 
   const speech = path.join(home, "speech");
   fs.mkdirSync(speech, { recursive: true });
   const isWin = process.platform === "win32";
-  const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
-  fs.writeFileSync(path.join(speech, binName), isWin ? "@echo off\necho usage\n" : "#!/bin/sh\necho usage\n");
-  if (!isWin) fs.chmodSync(path.join(speech, binName), 0o755);
+  workingEngine(speech);
 
   // Serves an HTML error page under the model's name — the failure a proxy or a
   // rate limit actually produces.
