@@ -31,6 +31,15 @@ npm run ai
 
 הוא בודק אם Ollama מותקן ורץ, ממליץ על מודל לפי הזיכרון של המחשב, ומוריד אותו.
 
+כדי שג'רביס יבין עברית בקול — פקודה אחת, או לחיצה כפולה על **`INSTALL-VOICE.bat`**:
+
+```
+npm run voice
+```
+
+הוא מוריד את מנוע הדיבור ומודל שמבין עברית, ואז שואל את ג'רביס עצמו אם הוא באמת שומע —
+ואומר "מוכן" רק אחרי שבדק.
+
 | מצב | מה מותר |
 |---|---|
 | **Safe** | קריאה בלבד, פעולות הפיכות |
@@ -159,6 +168,7 @@ Telegram, SMS or email.
 ```bash
 npm run setup           # install + build + test
 npm run ai              # optional: install the local AI brain (Ollama + a model)
+npm run voice           # optional: install local speech recognition (whisper.cpp + a model)
 npm start               # desktop agent (or headless if Electron is missing)
 npm run headless        # agent without a window (Linux/servers/CI)
 npm test                # agent test suite
@@ -195,11 +205,11 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
-- **Voice needs a speech engine installed on the computer.** Without whisper.cpp (or Vosk with its
-  optional Node binding) nothing is transcribed, and JARVIS says which component is missing and the
-  exact free steps to install it rather than guessing at what you said. An English-only model
-  (`*.en.bin`) is refused for Hebrew with that reason; use a multilingual one such as
-  `ggml-small.bin`.
+- **Voice needs a speech engine installed on the computer.** `npm run voice` (or a double-click on
+  `INSTALL-VOICE.bat`) fetches it and a multilingual model for you, then asks JARVIS whether it can
+  actually hear you before saying it is ready. Without one nothing is transcribed, and JARVIS names
+  the missing component and the exact free steps rather than guessing at what you said. An
+  English-only model (`*.en.bin`) is refused for Hebrew with that reason.
 - **Speaking out loud uses the voices installed in Windows.** Chrome also offers voices that are
   synthesised on Google's servers; those are excluded on purpose, so if no local voice exists for
   your language JARVIS says so and stays silent instead of sending your text away.
