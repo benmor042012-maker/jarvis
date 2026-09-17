@@ -254,6 +254,37 @@ try {
   check("answering a call is refused with the reason", (() => { try { agent.phone.answerIncoming(); return false; } catch (e) { return e.status === 501; } })());
   await phone.context.close();
 
+  // 10b. A microphone that is open but hears nothing at all says so, and offers
+  //      another input. This is the difference between "the wake phrase was
+  //      misheard" and "Windows handed over a dead device", which used to look
+  //      identical: an empty screen either way. It needs its own browser,
+  //      because the fake capture file is chosen per browser, not per page.
+  const silentFile = join(home, "silent-mic.wav");
+  writeFakeAudio(silentFile, { amplitude: 0 });
+  const silentBrowser = await chromium.launch({
+    args: [
+      "--use-fake-device-for-media-stream",
+      "--use-fake-ui-for-media-stream",
+      `--use-file-for-fake-audio-capture=${silentFile}`,
+      "--autoplay-policy=no-user-gesture-required",
+    ],
+  });
+  try {
+    const ctx = await silentBrowser.newContext({ permissions: ["microphone"] });
+    await ctx.addInitScript(`try { localStorage.setItem("jarvis.device.v1", ${JSON.stringify(creds(owner))}); } catch {}`);
+    const quiet = await ctx.newPage();
+    await quiet.goto(base + "/", { waitUntil: "domcontentloaded" });
+    await quiet.getByRole("button", { name: "Enable microphone" }).click();
+    await quiet.getByRole("button", { name: /Allow microphone/ }).click();
+    await until("the silent microphone to be called out", () => quiet.isVisible("text=The microphone is open, but completely silent."), 30000);
+    const said = (await quiet.textContent(".banner-warn")) || "";
+    check("a silent microphone is reported as a device problem", /device problem/i.test(said), said.slice(0, 200));
+    check("and nothing claims it heard a wake phrase", !/heard/i.test(said.replace(/been heard/i, "")), said.slice(0, 200));
+    await ctx.close();
+  } finally {
+    await silentBrowser.close().catch(() => undefined);
+  }
+
   // 11. When the agent goes away the page says so, and never pretends.
   agent.stop();
   await until("the offline state", () => page.isVisible("text=The JARVIS agent is not reachable"), 40000);

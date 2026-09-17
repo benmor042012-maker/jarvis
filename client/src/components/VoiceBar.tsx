@@ -49,6 +49,10 @@ export function VoiceBar() {
   const setVoiceMuted = useJarvis((s) => s.setVoiceMuted);
   const emergencyStop = useJarvis((s) => s.emergencyStop);
   const heard = useJarvis((s) => s.heard);
+  const micSilent = useJarvis((s) => s.micSilent);
+  const micDevices = useJarvis((s) => s.micDevices);
+  const micDeviceId = useJarvis((s) => s.micDeviceId);
+  const setMicDevice = useJarvis((s) => s.setMicDevice);
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -178,6 +182,34 @@ export function VoiceBar() {
         <div className="banner banner-warn">
           <strong>Speech to text is unavailable: {engine.reason}</strong>
           <InstallSteps install={engine.install} />
+        </div>
+      )}
+
+      {micSilent && (
+        <div className="banner banner-warn" role="alert">
+          <strong>The microphone is open, but completely silent.</strong>
+          <p>
+            Nothing at all has been heard for the last few seconds on{" "}
+            <q>{micSilent.device || "the input Windows chose"}</q>. That is a device problem, not a wake-phrase one: the input is muted, unplugged, or
+            it is not the microphone you are speaking into. Pick another one here, or set the right default in Windows sound settings.
+          </p>
+          {micDevices.length > 1 && (
+            <label className="mic-pick">
+              Microphone
+              <select
+                value={micDeviceId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  void setMicDevice(id || null);
+                }}
+              >
+                <option value="">Windows default</option>
+                {micDevices.map((d) => (
+                  <option key={d.id} value={d.id}>{d.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       )}
 

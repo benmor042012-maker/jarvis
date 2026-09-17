@@ -1381,6 +1381,17 @@ textarea {
   color: var(--white);
   quotes: "\201C" "\201D";
 }
+.mic-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mic-pick select {
+  max-width: 320px;
+}
 .mic-dot {
   width: 8px;
   height: 8px;
