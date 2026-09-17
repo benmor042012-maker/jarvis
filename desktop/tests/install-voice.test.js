@@ -189,13 +189,14 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
   fs.mkdirSync(speech, { recursive: true });
   const isWin = process.platform === "win32";
 
-  // A stand-in engine that answers --help, which is all detection asks of it.
+  // A stand-in engine that behaves like whisper.cpp: it writes the transcript
+  // file the caller asked for. The installer now runs it for real, so a stub
+  // that only prints something would not be enough.
   const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
-  if (isWin) {
-    t.diagnostic("windows: skipping the prebuilt-download path (no zip to serve)");
-  }
-  fs.writeFileSync(path.join(speech, binName), isWin ? "@echo off\necho usage: whisper\n" : "#!/bin/sh\necho 'usage: whisper'\n");
+  const stub = path.join(__dirname, "..", "..", "scripts", "e2e", "stub-whisper.mjs");
+  fs.writeFileSync(path.join(speech, binName), isWin ? `@echo off\r\nnode "${stub}" %*\r\n` : `#!/bin/sh\nexec node "${stub}" "$@"\n`);
   if (!isWin) fs.chmodSync(path.join(speech, binName), 0o755);
+  if (isWin) t.diagnostic("windows: a file named .exe that is really a script cannot be executed, which is the failure path asserted below");
 
   const model = fakeModel();
   const s = await serve({
@@ -204,15 +205,26 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
   try {
     const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base });
     const out = r.out;
-    assert.equal(r.status, 0, out);
     assert.match(out, /speech engine is already here/);
     assert.match(out, /Model installed: ggml-small\.bin/);
-    assert.match(out, /Ready\./, out);
-    assert.match(out, /Hebrew: yes/);
-    assert.match(out, /תתעורר/, "it must end by telling you what to say");
+    // Finding the files is not the claim — running the engine is.
+    assert.match(out, /Checking that the engine really runs/);
 
-    // It wrote the two paths into the config rather than leaving detection to
-    // guesswork, and the model really is on disk.
+    if (isWin) {
+      // The stub cannot actually execute on Windows, and that is the point:
+      // the installer must refuse to promise anything it could not run.
+      assert.equal(r.status, 1, out);
+      assert.ok(!/Ready\./.test(out), "it must not say Ready when the engine will not run");
+      assert.match(out, /will not run|speech engine failed/i, out);
+    } else {
+      assert.equal(r.status, 0, out);
+      assert.match(out, /Ready\./, out);
+      assert.match(out, /Hebrew: yes/);
+      assert.match(out, /תתעורר/, "it must end by telling you what to say");
+    }
+
+    // Either way it wrote the two paths into the config rather than leaving
+    // detection to guesswork, and the model really is on disk.
     const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
     assert.equal(cfg.voice.whisperModel, path.join(speech, "ggml-small.bin"));
     assert.equal(path.basename(cfg.voice.whisperPath), binName);
