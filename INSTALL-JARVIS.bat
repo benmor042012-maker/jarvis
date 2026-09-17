@@ -54,5 +54,6 @@ powershell -NoProfile -Command ^
 echo.
 echo   [OK] Installed. Starting JARVIS now...
 echo        Next time: double-click "JARVIS" on your desktop.
+echo        JARVIS runs in the tray - closing this window does not stop it.
 echo.
 call START-JARVIS.bat
