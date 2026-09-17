@@ -27,6 +27,7 @@ const require = createRequire(pathToFileURL(path.join(ROOT, "desktop", "package.
 const paths = require("./src/core/paths.js");
 const config = require("./src/core/config.js");
 const stt = require("./src/core/voice/stt.js");
+const procs = require("./src/core/procs.js");
 
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", g: "\x1b[32m", y: "\x1b[33m", red: "\x1b[31m", c: "\x1b[36m" };
 const say = (m) => { console.log(`${C.c}▸${C.r} ${m}`); };
@@ -112,6 +113,35 @@ function manualSteps() {
   console.log("");
 }
 
+/**
+ * Can the program start at all? `--help` needs no model and no audio, so this
+ * separates "cannot start" (a missing library, a build this processor cannot
+ * run) from "started but disliked its arguments".
+ */
+async function engineStarts(binary) {
+  try {
+    const r = await procs.run(binary, ["--help"], { timeoutMs: 20000 });
+    // Some builds answer --help with a non-zero code but still print their
+    // usage; what matters is that the process ran and said something.
+    return r.code === 0 || `${r.stdout}${r.stderr}`.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear out a broken engine, leaving the model — it is the big download. */
+function removeEngine(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isFile()) continue;
+    if (/\.bin$/i.test(e.name)) continue; // the model stays
+    try {
+      fs.rmSync(path.join(dir, e.name), { force: true });
+    } catch {
+      /* locked by something else; the install below will report it */
+    }
+  }
+}
+
 /** Half a second of silence — enough for the engine to start, load the model and answer. */
 function silentWav(ms = 500, rate = 16000) {
   const samples = Math.round((ms / 1000) * rate);
@@ -163,9 +193,20 @@ try {
   fs.mkdirSync(SPEECH_DIR, { recursive: true });
 
   // 1. The engine.
+  //
+  // A program already sitting in the folder is not the same as a working one.
+  // An earlier install that landed without the libraries beside it leaves an
+  // executable that cannot start, and taking its presence as "done" would skip
+  // the very download that repairs it — so a broken one is cleared out first.
   let binary = findBinary(SPEECH_DIR, BIN_NAMES);
+  if (binary && !(await engineStarts(binary))) {
+    warn(`The engine already here cannot start: ${binary}`);
+    console.log(`  ${C.dim}Replacing it — this is usually an earlier install that arrived without the libraries it needs.${C.r}`);
+    removeEngine(SPEECH_DIR);
+    binary = null;
+  }
   if (binary) {
-    ok(`The speech engine is already here: ${binary}`);
+    ok(`The speech engine is already here, and it runs: ${binary}`);
   } else if (WIN) {
     say("Looking for the latest ready-made Windows build of whisper.cpp…");
     const asset = await latestWindowsAsset();

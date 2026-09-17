@@ -250,7 +250,7 @@ function engineFailure(res, d) {
   const loader = code === 3221225781 || code === -1073741515; // STATUS_DLL_NOT_FOUND
   const illegal = code === 3221225501 || code === -1073741795; // STATUS_ILLEGAL_INSTRUCTION
   const why = loader
-    ? `${path.basename(d.binary)} could not start because a library it needs is missing from ${path.dirname(d.binary)}. The whisper.cpp download ships .dll files that must sit next to the program.`
+    ? `${path.basename(d.binary)} could not start because a library it needs is missing. Most often this is the Microsoft Visual C++ Redistributable, which Windows programs expect but the whisper.cpp download does not include — install it (free, from Microsoft) with:  winget install --id Microsoft.VCRedist.2015+.x64 -e   If that is already installed, the missing library is one of the .dll files that belong next to the program in ${path.dirname(d.binary)}.`
     : illegal
       ? `${path.basename(d.binary)} was built for a newer processor than this one and cannot run here.`
       : `${path.basename(d.binary)} stopped with exit code ${String(code)} without printing anything, which usually means it could not start at all — most often a missing library beside it.`;

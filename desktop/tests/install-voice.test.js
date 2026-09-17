@@ -22,15 +22,26 @@ const INSTALLER = path.join(__dirname, "..", "..", "scripts", "install-voice.mjs
  * the two would deadlock. stdin is closed so the script's prompt reads EOF and
  * takes its default, exactly as it does when run from a .bat file.
  */
-function runInstaller(env, timeoutMs = 60000) {
+function runInstaller(env, timeoutMs = 60000, stopWhen = null) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [INSTALLER], {
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
-    child.stdout.on("data", (c) => { out += c; });
-    child.stderr.on("data", (c) => { out += c; });
+    let stopped = false;
+    const watch = (c) => {
+      out += c;
+      // Some paths carry on into a real source build, which takes minutes and
+      // is not what the test is about. Stop once the behaviour under test has
+      // happened and let the assertions look at what it left behind.
+      if (stopWhen && !stopped && stopWhen.test(out)) {
+        stopped = true;
+        child.kill("SIGKILL");
+      }
+    };
+    child.stdout.on("data", watch);
+    child.stderr.on("data", watch);
     const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`the installer did not finish within ${String(timeoutMs)}ms. Output so far:\n${out}`)); }, timeoutMs);
     child.on("error", (e) => { clearTimeout(timer); reject(e); });
     child.on("close", (status) => { clearTimeout(timer); resolve({ status, out }); });
@@ -268,4 +279,50 @@ test("a model that never arrives is refused, and the manual steps are printed", 
     s.close();
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("an engine already there but unable to start is replaced, not trusted", async () => {
+  // Reported from a real machine: an earlier install had left main.exe without
+  // the libraries beside it. The installer saw a program in the folder, said
+  // "already here", and skipped the download that would have repaired it — so
+  // the fix could never reach the person who needed it. Presence is not proof.
+  const home = tmp();
+  const speech = path.join(home, "speech");
+  fs.mkdirSync(speech, { recursive: true });
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "whisper-cli.exe" : "whisper-cli";
+  const broken = path.join(speech, binName);
+
+  // A file that exists and is found, but cannot run: on POSIX it has no execute
+  // bit, on Windows it is not a real executable at all.
+  fs.writeFileSync(broken, "not a program");
+  if (!isWin) fs.chmodSync(broken, 0o644);
+  // A stale library from the broken install, and the model, which must survive.
+  fs.writeFileSync(path.join(speech, isWin ? "stale.dll" : "stale.so"), "old");
+  const model = fakeModel();
+  fs.writeFileSync(path.join(speech, "ggml-small.bin"), model);
+
+  // No release server is offered, so the reinstall it now attempts must fail —
+  // which is the proof that it stopped trusting the broken copy and tried.
+  // Stop as soon as it starts installing a replacement — carrying on means a
+  // download or a full source build, neither of which this test is about.
+  const r = await runInstaller(
+    { JARVIS_HOME: home, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none", JARVIS_WHISPER_MODEL_BASE: "http://127.0.0.1:9" },
+    60000,
+    /Looking for the latest|has to be built here/i,
+  );
+  const out = r.out;
+
+  assert.ok(!/already here, and it runs/.test(out), `it must not accept a program that cannot start:\n${out}`);
+  assert.match(out, /cannot start/i, out);
+  assert.match(out, /Replacing it/i, "and it must say it is replacing it");
+  assert.ok(/Looking for the latest|has to be built here/i.test(out), `and then actually try to install one:\n${out}`);
+
+  // The broken program and its stale library are gone; the big download is not.
+  assert.equal(fs.existsSync(broken), false, "the broken program must be cleared out");
+  assert.equal(fs.existsSync(path.join(speech, isWin ? "stale.dll" : "stale.so")), false, "and so must its stale libraries");
+  assert.equal(fs.existsSync(path.join(speech, "ggml-small.bin")), true, "but the 466 MB model must be kept");
+  assert.equal(fs.statSync(path.join(speech, "ggml-small.bin")).size, model.length);
+
+  fs.rmSync(home, { recursive: true, force: true });
 });
