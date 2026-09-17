@@ -44,8 +44,27 @@ function preferSupported(configured) {
   return [configured];
 }
 
+// Bigger multilingual models, best first. Hebrew is where the small ones fail:
+// "תתעורר" came back from ggml-small as "תפקות" on a real machine.
+const BETTER_MODELS = ["ggml-large-v3-turbo.bin", "ggml-large-v3.bin", "ggml-medium.bin"];
+const WEAK_MODELS = ["ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"];
+
 function modelCandidates(cfg) {
   const configured = cfg.voice?.whisperModel?.trim();
+  // A better model that arrived next to a weak configured one wins, the same
+  // way a working program beside a retired one does: someone who downloaded it
+  // should not have to edit config.json to get the Hebrew they came for.
+  if (configured && WEAK_MODELS.includes(path.basename(configured).toLowerCase())) {
+    const dir = path.dirname(configured);
+    for (const name of BETTER_MODELS) {
+      const better = path.join(dir, name);
+      try {
+        if (fs.statSync(better).isFile()) return [better, configured];
+      } catch {
+        /* not there; keep looking */
+      }
+    }
+  }
   if (configured) return [configured];
   const dirs = [path.join(paths.HOME, "speech"), path.join(paths.HOME, "models"), path.join(os.homedir(), "whisper.cpp", "models")];
   // Multilingual models only: the ".en" builds cannot transcribe Hebrew at all.
@@ -218,7 +237,10 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
   const keep = !!cfg.voice?.keepAudio;
   try {
     if (d.engine === "whisper.cpp") {
-      const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      // -bs 5: beam search rather than the single greedy pass. It costs a
+      // little time per utterance and is the difference between a Hebrew word
+      // coming back right and coming back as something that rhymes with it.
+      const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
       if (res.timedOut) throw Object.assign(new Error("Local transcription timed out."), { status: 504 });

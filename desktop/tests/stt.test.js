@@ -100,3 +100,28 @@ test("a configured main.exe is replaced by the whisper-cli.exe beside it", async
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a better model beside a weak configured one is used instead", async () => {
+  // The same self-healing as the retired program: someone who downloads the
+  // turbo model by hand should get Hebrew that works, without editing config.
+  const fs = require("fs");
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-model-"));
+  const bin = path.join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli");
+  const weak = path.join(dir, "ggml-small.bin");
+  try {
+    fs.writeFileSync(bin, "x");
+    fs.writeFileSync(weak, "ggml");
+    const cfg = { voice: { whisperPath: bin, whisperModel: weak } };
+    let d = await stt.detect(cfg, { force: true });
+    assert.equal(d.model, weak, "on its own, the configured model is what there is");
+
+    const turbo = path.join(dir, "ggml-large-v3-turbo.bin");
+    fs.writeFileSync(turbo, "ggml");
+    d = await stt.detect(cfg, { force: true });
+    assert.equal(d.model, turbo);
+    assert.equal(d.hebrew, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

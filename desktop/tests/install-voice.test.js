@@ -61,6 +61,11 @@ function tmp() {
   }
 }
 
+// Every model the installer can offer. Kept beside the installer's own table:
+// a test that only served the current default would go quiet the day the
+// recommendation changes, which is exactly when it should speak up.
+const MODEL_FILES = ["ggml-large-v3-turbo.bin", "ggml-medium.bin", "ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"];
+
 /** A model file is "ggml" plus enough bytes to not look like an error page. */
 function fakeModel(size = 2 * 1024 * 1024) {
   const b = Buffer.alloc(size);
@@ -261,9 +266,10 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
   if (isWin) t.diagnostic("windows: a file named .exe that is really a script cannot be executed, which is the failure path asserted below");
 
   const model = fakeModel();
-  const s = await serve({
-    "/ggml-small.bin": (_req, res) => { res.writeHead(200, { "content-length": String(model.length) }).end(model); },
-  });
+  // Whichever model the installer recommends, this stands in for it: the test
+  // is about the steps, not about which name is the default this month.
+  const serveModel = (_req, res) => { res.writeHead(200, { "content-length": String(model.length) }).end(model); };
+  const s = await serve(Object.fromEntries(MODEL_FILES.map((f) => [`/${f}`, serveModel])));
   try {
     // A dead release address, so no test can ever reach the real internet.
     const env = { JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" };
@@ -281,7 +287,7 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
     const r = await runInstaller(env);
     const out = r.out;
     assert.match(out, /speech engine is already here, and it runs/, out);
-    assert.match(out, /Model installed: ggml-small\.bin/);
+    assert.match(out, /Model installed: ggml-[a-z0-9.-]+\.bin/);
     // Finding the files is not the claim — running the engine is.
     assert.match(out, /Checking that the engine really runs/);
     assert.equal(r.status, 0, out);
@@ -292,7 +298,9 @@ test("the installer leaves JARVIS able to hear, and says so only after checking"
     // It wrote the two paths into the config rather than leaving detection to
     // guesswork, and the model really is on disk.
     const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
-    assert.equal(cfg.voice.whisperModel, path.join(speech, "ggml-small.bin"));
+    const installed = fs.readdirSync(speech).filter((f) => f.endsWith(".bin"));
+    assert.equal(installed.length, 1, `exactly one model should be installed, found ${installed.join(", ")}`);
+    assert.equal(cfg.voice.whisperModel, path.join(speech, installed[0]));
     assert.equal(path.basename(cfg.voice.whisperPath), binName);
     assert.equal(cfg.voice.enabled, true);
     assert.equal(fs.statSync(cfg.voice.whisperModel).size, model.length);
@@ -312,15 +320,14 @@ test("a model that never arrives is refused, and the manual steps are printed", 
   // Serves an HTML error page under the model's name — the failure a proxy or a
   // rate limit actually produces.
   const junk = Buffer.alloc(2 * 1024 * 1024, "<");
-  const s = await serve({
-    "/ggml-small.bin": (_req, res) => { res.writeHead(200, { "content-length": String(junk.length) }).end(junk); },
-  });
+  const serveJunk = (_req, res) => { res.writeHead(200, { "content-length": String(junk.length) }).end(junk); };
+  const s = await serve(Object.fromEntries(MODEL_FILES.map((f) => [`/${f}`, serveJunk])));
   try {
     const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" });
     const out = r.out;
     assert.equal(r.status, 1, "a failed install must not report success");
     assert.match(out, /not a speech model/);
-    assert.equal(fs.existsSync(path.join(speech, "ggml-small.bin")), false, "the junk must not be kept");
+    assert.deepEqual(fs.readdirSync(speech).filter((f) => f.endsWith(".bin")), [], "the junk must not be kept");
     // And it must tell the user how to do it themselves — the Windows steps
     // point at the ready-made build and the model download, the others at
     // building it, so assert on what both have to name.
@@ -378,4 +385,36 @@ test("an engine already there but unable to start is replaced, not trusted", asy
   assert.equal(fs.statSync(path.join(speech, "ggml-small.bin")).size, model.length);
 
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("a model that mishears Hebrew is offered the better one, and the old file is left alone", async () => {
+  // From a real machine: the wake phrase "תתעורר" came back from ggml-small as
+  // "תפקות". The installer used to say "a speech model is already here" and
+  // stop, so the one thing that would have fixed it was never mentioned.
+  const home = tmp();
+  const speech = path.join(home, "speech");
+  fs.mkdirSync(speech, { recursive: true });
+  workingEngine(speech);
+  const weak = path.join(speech, "ggml-small.bin");
+  fs.writeFileSync(weak, fakeModel());
+
+  const model = fakeModel();
+  const serveModel = (_req, res) => { res.writeHead(200, { "content-length": String(model.length) }).end(model); };
+  const s = await serve(Object.fromEntries(MODEL_FILES.map((f) => [`/${f}`, serveModel])));
+  try {
+    // stdin is closed, so the prompt reads EOF and takes its default — which
+    // must be the upgrade, not "leave it as it was".
+    const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: s.base, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" });
+    assert.match(r.out, /mishears Hebrew/, r.out);
+    assert.match(r.out, /ggml-large-v3-turbo\.bin/, "it must name the model it offers");
+    const better = path.join(speech, "ggml-large-v3-turbo.bin");
+    assert.equal(fs.existsSync(better), true, `the better model was not installed. Output:\n${r.out}`);
+    const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+    assert.equal(cfg.voice.whisperModel, better, "the config must point at the model that hears Hebrew");
+    assert.equal(fs.existsSync(weak), true, "the old model is the user's file — deleting it is not ours to do");
+    assert.match(r.out, /delete it yourself/i, "and it says how to get the space back");
+  } finally {
+    s.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
