@@ -1371,6 +1371,16 @@ textarea {
   color: var(--muted);
   font-size: 13px;
 }
+/* What was heard but not acted on: quieter than the state line, still legible,
+   and it never pushes the buttons around because the block keeps its height. */
+.voice-heard {
+  font-size: 12px !important;
+  color: var(--dim, var(--muted)) !important;
+}
+.voice-heard q {
+  color: var(--white);
+  quotes: "\201C" "\201D";
+}
 .mic-dot {
   width: 8px;
   height: 8px;

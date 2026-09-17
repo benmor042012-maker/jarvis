@@ -89,6 +89,9 @@ test("standby ignores ordinary speech and wakes only on the phrase", async () =>
   assert.equal(r.action, "ignored");
   assert.equal(r.reason, "no_wake_phrase");
   assert.equal(s.state, "standby");
+  // The window shows this back to the user: "I said the wake phrase and
+  // nothing happened" is only answerable if what was heard instead comes back.
+  assert.equal(r.text, said);
 
   said = "תתעורר";
   r = await s.handleUtterance(wav(), { durationMs: 900 });
