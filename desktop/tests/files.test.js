@@ -47,6 +47,27 @@ test("write/read/search/move/delete/overwrite inside workspace", async () => {
   assert.ok(r.data.entries.length >= 2);
 });
 
+test("two trash copies of the same name in the same millisecond both survive", async () => {
+  // Freeze the clock so both copies really do land on the same timestamp,
+  // which on a fast machine is what happens anyway.
+  const realIso = Date.prototype.toISOString;
+  Date.prototype.toISOString = function frozen() { return "2026-01-01T00:00:00.000Z"; };
+  let backup, trashed;
+  try {
+    let r = await reg.run("write_file", { path: "t/same.txt", content: "first" }, { cfg });
+    assert.ok(r.ok, r.summary);
+    r = await reg.run("overwrite_file", { path: "t/same.txt", content: "second" }, { cfg });
+    backup = r.data.backup;
+    r = await reg.run("delete_file", { path: "t/same.txt" }, { cfg });
+    trashed = r.data.trash;
+  } finally {
+    Date.prototype.toISOString = realIso;
+  }
+  assert.notEqual(backup, trashed);
+  assert.equal(fs.readFileSync(backup, "utf8"), "first");
+  assert.equal(fs.readFileSync(trashed, "utf8"), "second");
+});
+
 test("registry validates params and reports unavailable tools honestly", async () => {
   await assert.rejects(() => reg.run("write_file", { path: "x", content: 5 }, { cfg }), /string/);
   await assert.rejects(() => reg.run("write_file", { path: "x", bogus: 1 }, { cfg }), /unknown field/);
