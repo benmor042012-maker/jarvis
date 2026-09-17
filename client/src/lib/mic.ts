@@ -53,9 +53,22 @@ export interface MicOptions {
   onSegment: (wav: Blob, durationMs: number) => void;
   onLevel?: (level: number) => void;
   onError?: (message: string) => void;
+  /**
+   * The microphone opened, stayed open, and never heard anything at all. That
+   * is not the same as "no wake phrase": it means Windows handed over a device
+   * that delivers silence — a disconnected jack, a muted input, or simply the
+   * wrong one of several. Reported once per open, with the device's own name.
+   */
+  onSilent?: (deviceLabel: string) => void;
+  /** Which input to open. Empty means whatever Windows considers default. */
+  deviceId?: string | null;
 }
 
 const PREROLL_MS = 500;
+// How long an open microphone may deliver nothing but digital silence before it
+// is called out. Long enough that a quiet room does not trip it.
+const SILENT_AFTER_MS = 9000;
+const SILENT_PEAK = 0.008;
 const FLOOR_FLOOR = 0.006; // below this everything is room tone
 const SPEECH_FACTOR = 2.6; // how far above the measured noise floor counts as speech
 
@@ -72,6 +85,10 @@ export class MicCapture {
   private speaking = false;
   private floor = 0.01;
   private opts: MicOptions;
+  private openedAt = 0;
+  private peak = 0;
+  private silentReported = false;
+  private deviceLabel = "";
   running = false;
 
   constructor(opts: MicOptions) {
@@ -89,10 +106,11 @@ export class MicCapture {
     if (!support.supported) throw new Error(support.reason ?? "The microphone is not available in this browser.");
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false,
-      });
+      const audio: MediaTrackConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      // An explicit choice is exact: silently falling back to the device that
+      // was not working is how "I picked the other microphone" goes nowhere.
+      if (this.opts.deviceId) audio.deviceId = { exact: this.opts.deviceId };
+      stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
     } catch (err) {
       throw new Error(describeMicError(err));
     }
@@ -118,6 +136,10 @@ export class MicCapture {
     this.ctx = ctx;
     this.source = source;
     this.node = node;
+    this.openedAt = Date.now();
+    this.peak = 0;
+    this.silentReported = false;
+    this.deviceLabel = stream.getAudioTracks()[0]?.label ?? "";
     this.running = true;
   }
 
@@ -157,6 +179,11 @@ export class MicCapture {
     const chunk = downsample(input, rate);
     const level = rms(chunk);
     this.opts.onLevel?.(Math.min(1, level * 12));
+    if (level > this.peak) this.peak = level;
+    if (!this.silentReported && this.peak < SILENT_PEAK && Date.now() - this.openedAt > SILENT_AFTER_MS) {
+      this.silentReported = true;
+      this.opts.onSilent?.(this.deviceLabel);
+    }
     // Track the quietest recent level as the room's noise floor so a noisy room
     // raises the bar instead of triggering on everything.
     this.floor = level < this.floor ? this.floor * 0.9 + level * 0.1 : this.floor * 0.995 + level * 0.005;

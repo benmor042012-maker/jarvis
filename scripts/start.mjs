@@ -111,6 +111,28 @@ function wire(child, canFallBack) {
   });
 }
 
+/**
+ * Electron with an app path it cannot read opens its own welcome window, which
+ * looks like JARVIS starting and then doing nothing. That happens for a real
+ * reason worth naming: unpacking a new download over a folder while JARVIS is
+ * still running leaves the files Windows had locked behind, so main.js or
+ * package.json can be missing or half-written. Check before launching.
+ */
+function checkDesktopApp(dir) {
+  const manifest = join(dir, "package.json");
+  let main = null;
+  try {
+    main = JSON.parse(readFileSync(manifest, "utf8")).main || "main.js";
+  } catch {
+    die(`The desktop app is incomplete: ${manifest} is missing or unreadable. This is what an unzip over a running JARVIS leaves behind. Quit JARVIS from the tray icon, unpack the download again, then run ${C.b}npm run setup${C.r}.`);
+  }
+  if (!existsSync(join(dir, main))) {
+    die(`The desktop app is incomplete: ${join(dir, main)} is missing. Quit JARVIS from the tray icon, unpack the download again, then run ${C.b}npm run setup${C.r}.`);
+  }
+}
+
+if (useDesktop) checkDesktopApp(join(ROOT, "desktop"));
+
 if (useDesktop && detached) {
   // An absolute path, not ".": detached from a shortcut the working directory
   // is not something to rely on, and Electron with no app path opens its own

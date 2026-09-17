@@ -112,3 +112,51 @@ test("started detached, the agent outlives the window that launched it", async (
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("an incomplete desktop app is named, not launched into Electron's welcome window", async () => {
+  // Reported from a real machine: a new download was unpacked over the folder
+  // while JARVIS was still running, so Windows kept the locked files and
+  // desktop/main.js never arrived. Electron, handed an app path it cannot
+  // read, opens its own demo window — which looks exactly like JARVIS starting
+  // and then ignoring you. The launcher has to say what is missing instead.
+  const os = require("os");
+  const { spawn } = require("child_process");
+  const isWin = process.platform === "win32";
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-broken-"));
+  const bin = path.join(root, "desktop", "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(path.join(root, "client", "dist"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "scripts"), path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "client", "dist", "index.html"), "<!doctype html>");
+  // The manifest arrived; the program it points at did not.
+  fs.writeFileSync(path.join(root, "desktop", "package.json"), JSON.stringify({ name: "jarvis-desktop", main: "main.js" }));
+  // Electron only has to look installed: the launcher must refuse before it
+  // would ever be run.
+  const electron = path.join(bin, isWin ? "electron.cmd" : "electron");
+  fs.writeFileSync(electron, isWin ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  if (!isWin) fs.chmodSync(electron, 0o755);
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-broken-home-"));
+  try {
+    const child = spawn(process.execPath, [path.join(root, "scripts", "start.mjs")], {
+      env: { ...process.env, JARVIS_HOME: home },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.on("data", (c) => { out += c; });
+    child.stderr.on("data", (c) => { out += c; });
+    const code = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`the launcher never exited. Output:\n${out}`)); }, 30000);
+      child.on("close", (c) => { clearTimeout(timer); resolve(c); });
+    });
+    assert.equal(code, 1, `it must refuse to start. Output:\n${out}`);
+    assert.match(out, /incomplete/i, out);
+    assert.match(out, /main\.js/, "it names the file that is missing");
+    assert.match(out, /tray/i, "and the way out: quit JARVIS, unpack again");
+    assert.doesNotMatch(out, /JARVIS is running/, "nothing may claim success");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
