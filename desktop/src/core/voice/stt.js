@@ -18,15 +18,53 @@ function whisperCandidates(cfg) {
   const home = paths.HOME;
   const names = IS_WIN ? ["whisper-cli.exe", "main.exe", "whisper.exe"] : ["whisper-cli", "main", "whisper"];
   const dirs = [path.join(home, "speech"), path.join(home, "whisper"), path.join(os.homedir(), "whisper.cpp"), path.join(os.homedir(), "whisper.cpp", "build", "bin")];
-  const out = configured ? [configured] : [];
+  // A configured path wins, except for one trap: recent whisper.cpp releases
+  // ship main.exe as a stub that says "the binary 'main.exe' is deprecated,
+  // please use 'whisper-cli.exe' instead" and exits 1. An install done before
+  // that change wrote main.exe into the config, so prefer the working program
+  // beside it rather than failing on every word the user says.
+  const out = configured ? preferSupported(configured) : [];
   for (const d of dirs) for (const n of names) out.push(path.join(d, n));
   // Also whatever is on PATH.
   out.push(IS_WIN ? "whisper-cli.exe" : "whisper-cli");
   return out;
 }
 
+// The deprecated stub, and the program that replaced it.
+const DEPRECATED = IS_WIN ? ["main.exe", "whisper.exe"] : ["main", "whisper"];
+
+function preferSupported(configured) {
+  if (!DEPRECATED.includes(path.basename(configured).toLowerCase())) return [configured];
+  const replacement = path.join(path.dirname(configured), IS_WIN ? "whisper-cli.exe" : "whisper-cli");
+  try {
+    if (fs.statSync(replacement).isFile()) return [replacement, configured];
+  } catch {
+    /* it is not there; the configured one is all we have */
+  }
+  return [configured];
+}
+
+// Bigger multilingual models, best first. Hebrew is where the small ones fail:
+// "תתעורר" came back from ggml-small as "תפקות" on a real machine.
+const BETTER_MODELS = ["ggml-large-v3-turbo.bin", "ggml-large-v3.bin", "ggml-medium.bin"];
+const WEAK_MODELS = ["ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"];
+
 function modelCandidates(cfg) {
   const configured = cfg.voice?.whisperModel?.trim();
+  // A better model that arrived next to a weak configured one wins, the same
+  // way a working program beside a retired one does: someone who downloaded it
+  // should not have to edit config.json to get the Hebrew they came for.
+  if (configured && WEAK_MODELS.includes(path.basename(configured).toLowerCase())) {
+    const dir = path.dirname(configured);
+    for (const name of BETTER_MODELS) {
+      const better = path.join(dir, name);
+      try {
+        if (fs.statSync(better).isFile()) return [better, configured];
+      } catch {
+        /* not there; keep looking */
+      }
+    }
+  }
   if (configured) return [configured];
   const dirs = [path.join(paths.HOME, "speech"), path.join(paths.HOME, "models"), path.join(os.homedir(), "whisper.cpp", "models")];
   // Multilingual models only: the ".en" builds cannot transcribe Hebrew at all.
@@ -199,11 +237,14 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
   const keep = !!cfg.voice?.keepAudio;
   try {
     if (d.engine === "whisper.cpp") {
-      const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      // -bs 5: beam search rather than the single greedy pass. It costs a
+      // little time per utterance and is the difference between a Hebrew word
+      // coming back right and coming back as something that rhymes with it.
+      const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
       if (res.timedOut) throw Object.assign(new Error("Local transcription timed out."), { status: 504 });
-      if (res.code !== 0) throw Object.assign(new Error(`The speech engine failed: ${(res.stderr || res.stdout).trim().slice(0, 300)}`), { status: 500 });
+      if (res.code !== 0) throw engineFailure(res, d);
       const txtFile = file.replace(/\.wav$/, ".txt");
       let text = "";
       try {
@@ -232,6 +273,46 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
   }
 }
 
+/**
+ * Why the engine failed, in words that lead somewhere.
+ *
+ * A program that dies without printing anything is the common Windows case —
+ * usually a missing DLL next to the executable, or a build the processor
+ * cannot run. "The speech engine failed:" followed by nothing tells the user
+ * nothing at all, so there is always an exit code and a likely cause here.
+ */
+function engineFailure(res, d) {
+  const said = String(res.stderr || res.stdout || "").trim();
+  const code = res.code;
+  // whisper.cpp's own words for "you are running the retired program". It never
+  // transcribes anything, so echoing the warning alone would leave the user
+  // reading a deprecation notice with nothing to do about it.
+  if (/\bdeprecated\b/i.test(said) && /whisper-cli/i.test(said)) {
+    const e = new Error(`The speech engine failed: ${path.basename(d.binary)} is the retired whisper.cpp program and only prints a deprecation notice. The one to use is ${IS_WIN ? "whisper-cli.exe" : "whisper-cli"} in ${path.dirname(d.binary)}. If it is not there, run  npm run voice  to fetch it (free, no account).`);
+    e.status = 500;
+    e.code = "speech_engine_failed";
+    e.exit = code;
+    return e;
+  }
+  if (said) {
+    return Object.assign(new Error(`The speech engine failed (exit ${String(code)}): ${said.slice(0, 300)}`), { status: 500, code: "speech_engine_failed", exit: code });
+  }
+  // Windows uses these for "could not load" rather than printing anything.
+  const loader = code === 3221225781 || code === -1073741515; // STATUS_DLL_NOT_FOUND
+  const illegal = code === 3221225501 || code === -1073741795; // STATUS_ILLEGAL_INSTRUCTION
+  const why = loader
+    ? `${path.basename(d.binary)} could not start because a library it needs is missing. Most often this is the Microsoft Visual C++ Redistributable, which Windows programs expect but the whisper.cpp download does not include — install it (free, from Microsoft) with:  winget install --id Microsoft.VCRedist.2015+.x64 -e   If that is already installed, the missing library is one of the .dll files that belong next to the program in ${path.dirname(d.binary)}.`
+    : illegal
+      ? `${path.basename(d.binary)} was built for a newer processor than this one and cannot run here.`
+      : `${path.basename(d.binary)} stopped with exit code ${String(code)} without printing anything, which usually means it could not start at all — most often a missing library beside it.`;
+  const e = new Error(`The speech engine failed: ${why}`);
+  e.status = 500;
+  e.code = "speech_engine_failed";
+  e.exit = code;
+  e.install = INSTALL_STEPS.whisper;
+  return e;
+}
+
 function cleanup(text) {
   return String(text || "")
     .replace(/\[[^\]]*\]/g, " ") // [BLANK_AUDIO], [Music] …
@@ -240,4 +321,4 @@ function cleanup(text) {
     .trim();
 }
 
-module.exports = { detect, transcribe, resetCache, isWav, cleanup, INSTALL_STEPS };
+module.exports = { detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };

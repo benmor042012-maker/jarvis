@@ -8,6 +8,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "ai": "node scripts/install-ai.mjs",
+    "voice": "node scripts/install-voice.mjs",
     "start": "node scripts/start.mjs",
     "headless": "node scripts/start.mjs --headless",
     "build": "npm --prefix client run build",

@@ -91,6 +91,15 @@ interface JarvisState {
   listening: boolean;
   /** 0..1 input meter, so "always listening" is never invisible. */
   level: number;
+  // What the last utterance came back as when it was not for JARVIS. Without
+  // this, saying the wake phrase and having it misheard looks identical to a
+  // dead microphone: the screen says nothing either way.
+  heard: { text: string; at: number } | null;
+  /** The microphone stayed open and delivered nothing but silence. */
+  micSilent: { device: string } | null;
+  /** The inputs this browser can offer, and the one JARVIS is told to use. */
+  micDevices: { id: string; label: string }[];
+  micDeviceId: string | null;
   micError: string | null;
   micInstall: SpeechEngineInstall | null;
   /** Why this browser/page cannot open a microphone at all, if it cannot. */
@@ -132,6 +141,8 @@ interface JarvisState {
   setVoicePaused: (paused: boolean) => Promise<void>;
   setVoiceMuted: (muted: boolean) => Promise<void>;
   setKeyboard: (on: boolean) => void;
+  refreshMicDevices: () => Promise<void>;
+  setMicDevice: (id: string | null) => Promise<void>;
   say: (text: string) => Promise<void>;
 
   refreshAlerts: () => Promise<void>;
@@ -185,6 +196,10 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   voice: null,
   listening: false,
   level: 0,
+  heard: null,
+  micSilent: null,
+  micDevices: [],
+  micDeviceId: loadMicDevice(),
   micError: null,
   micInstall: null,
   micBlocked: null,
@@ -465,7 +480,8 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       }
       return;
     }
-    set({ listening: true });
+    set({ listening: true, micSilent: null });
+    void get().refreshMicDevices();
     try {
       // Only the JARVIS computer itself can grant the microphone; a paired
       // phone can speak, but it cannot switch listening on for the computer.
@@ -507,6 +523,29 @@ export const useJarvis = create<JarvisState>((set, get) => ({
 
   setKeyboard: (on) => {
     set({ keyboard: on });
+  },
+
+  refreshMicDevices: async () => {
+    // Labels are only revealed once the microphone has been granted, so this is
+    // called after permission rather than on load.
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const inputs = all.filter((d) => d.kind === "audioinput").map((d, i) => ({ id: d.deviceId, label: d.label || `Microphone ${String(i + 1)}` }));
+      set({ micDevices: inputs });
+    } catch {
+      set({ micDevices: [] });
+    }
+  },
+
+  setMicDevice: async (id) => {
+    saveMicDevice(id);
+    set({ micDeviceId: id, micSilent: null });
+    capture().update({ deviceId: id });
+    if (!get().listening) return;
+    // Reopen on the chosen input: a running stream keeps the old device.
+    capture().stop();
+    set({ listening: false });
+    await get().startListening();
   },
 
   say: async (text) => {
@@ -554,6 +593,25 @@ export const useJarvis = create<JarvisState>((set, get) => ({
 }));
 
 // --- microphone ---------------------------------------------------------------
+const MIC_DEVICE_KEY = "jarvis.mic.device";
+
+function loadMicDevice(): string | null {
+  try {
+    return window.localStorage.getItem(MIC_DEVICE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveMicDevice(id: string | null): void {
+  try {
+    if (id) window.localStorage.setItem(MIC_DEVICE_KEY, id);
+    else window.localStorage.removeItem(MIC_DEVICE_KEY);
+  } catch {
+    /* a browser with storage blocked still works, it just forgets the choice */
+  }
+}
+
 let mic: MicCapture | null = null;
 let uploading = false;
 let queued: { wav: Blob; ms: number } | null = null;
@@ -580,6 +638,11 @@ function capture(): MicCapture {
     onError: (message) => {
       useJarvis.setState({ micError: message });
     },
+    onSilent: (device) => {
+      useJarvis.setState({ micSilent: { device } });
+      void useJarvis.getState().refreshMicDevices();
+    },
+    deviceId: useJarvis.getState().micDeviceId,
   });
   return mic;
 }
@@ -623,12 +686,16 @@ async function drainUploads(): Promise<void> {
 
 async function handleUtterance(res: UtteranceResult): Promise<void> {
   const s = useJarvis.getState();
-  useJarvis.setState({ micError: null });
+  useJarvis.setState({ micError: null, micSilent: null });
   switch (res.action) {
     case "ignored":
       // Silence, background talk, a false wake or quiet hours. Never logged as
-      // a transcript: only the agent keeps that, and only as text.
+      // a transcript: only the agent keeps that, and only as text. It is still
+      // shown on the voice bar for a few seconds, because "I said the wake
+      // phrase and nothing happened" has to be answerable: either the words
+      // came back wrong, or nothing was heard at all.
       if (res.reason === "quiet_hours" && res.detail && !s.log.some((l) => l.text === res.detail)) s.addLog("system", res.detail);
+      useJarvis.setState({ heard: { text: (res.text ?? "").trim(), at: Date.now() } });
       return;
     case "stopped": {
       stopSound();
@@ -639,6 +706,7 @@ async function handleUtterance(res: UtteranceResult): Promise<void> {
       return;
     }
     case "woke": {
+      useJarvis.setState({ heard: null });
       wakeSound();
       s.setOrb("listening");
       return;

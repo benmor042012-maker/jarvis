@@ -48,8 +48,22 @@ export function VoiceBar() {
   const setVoicePaused = useJarvis((s) => s.setVoicePaused);
   const setVoiceMuted = useJarvis((s) => s.setVoiceMuted);
   const emergencyStop = useJarvis((s) => s.emergencyStop);
+  const heard = useJarvis((s) => s.heard);
+  const micSilent = useJarvis((s) => s.micSilent);
+  const micDevices = useJarvis((s) => s.micDevices);
+  const micDeviceId = useJarvis((s) => s.micDeviceId);
+  const setMicDevice = useJarvis((s) => s.setMicDevice);
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  // The "heard" line is only useful while it is recent, so a tick retires it
+  // instead of leaving a stale transcript on screen.
+  useEffect(() => {
+    if (!heard) return;
+    const t = window.setInterval(() => { setNow(Date.now()); }, 1000);
+    return () => { window.clearInterval(t); };
+  }, [heard]);
 
   // The browser stops delivering audio when the tab is frozen; reflect that
   // rather than showing a listening indicator that is no longer true.
@@ -65,6 +79,9 @@ export function VoiceBar() {
 
   const state: VoiceState = emergency ? "off" : micBlocked ? "unavailable" : !listening ? (voice?.state === "unavailable" ? "unavailable" : "off") : voice?.state ?? "standby";
   const engine = voice?.engine;
+  // The small models understand Hebrew on paper and get the words wrong in
+  // practice, which reads as "JARVIS ignores me" rather than as a model choice.
+  const weakModel = /ggml-(small|base|tiny)/i.test(engine?.model ?? "");
   const wake = voice?.wakePhrases ?? [];
   const stops = voice?.stopPhrases ?? [];
   const online = connection === "online";
@@ -120,6 +137,19 @@ export function VoiceBar() {
             {listening && <span className="mic-dot" aria-hidden="true" />}
           </strong>
           <p>{hint}</p>
+          {listening && heard && now - heard.at < 20000 && (state === "standby" || state === "quiet_hours") && (
+            <p className="voice-heard">
+              {heard.text
+                ? <>Heard <q>{heard.text}</q> — that is not the wake phrase.</>
+                : <>Something was heard, but no words came back from the speech engine. Speak a little closer, or check that Windows is using the microphone you are speaking into.</>}
+              {heard.text && weakModel && (
+                <>
+                  {" "}
+                  <span className="voice-fix">This computer is using {engine?.model}, which mishears Hebrew. Run <code>npm run voice</code> and take the turbo model (free, 1.6 GB) — that is usually the whole problem.</span>
+                </>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="voice-actions">
@@ -161,6 +191,34 @@ export function VoiceBar() {
         <div className="banner banner-warn">
           <strong>Speech to text is unavailable: {engine.reason}</strong>
           <InstallSteps install={engine.install} />
+        </div>
+      )}
+
+      {micSilent && (
+        <div className="banner banner-warn" role="alert">
+          <strong>The microphone is open, but completely silent.</strong>
+          <p>
+            Nothing at all has been heard for the last few seconds on{" "}
+            <q>{micSilent.device || "the input Windows chose"}</q>. That is a device problem, not a wake-phrase one: the input is muted, unplugged, or
+            it is not the microphone you are speaking into. Pick another one here, or set the right default in Windows sound settings.
+          </p>
+          {micDevices.length > 1 && (
+            <label className="mic-pick">
+              Microphone
+              <select
+                value={micDeviceId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  void setMicDevice(id || null);
+                }}
+              >
+                <option value="">Windows default</option>
+                {micDevices.map((d) => (
+                  <option key={d.id} value={d.id}>{d.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       )}
 

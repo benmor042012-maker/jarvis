@@ -1285,6 +1285,7 @@ textarea {
 
 .voice-main {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
@@ -1351,8 +1352,10 @@ textarea {
 }
 
 .voice-copy {
-  flex: 1;
-  min-width: 0;
+  /* Wide enough to read: when the buttons need the room they wrap to their own
+     row instead of squeezing this into a one-word-per-line column. */
+  flex: 1 1 280px;
+  min-width: 220px;
 }
 .voice-state {
   display: inline-flex;
@@ -1367,6 +1370,33 @@ textarea {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+/* What was heard but not acted on: quieter than the state line, still legible,
+   and it never pushes the buttons around because the block keeps its height. */
+.voice-heard {
+  font-size: 12px !important;
+  color: var(--dim, var(--muted)) !important;
+}
+.voice-heard q {
+  color: var(--white);
+  quotes: "\201C" "\201D";
+}
+.voice-fix {
+  color: var(--accent, var(--white));
+}
+.voice-fix code {
+  font-family: var(--font-mono, monospace);
+}
+.mic-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mic-pick select {
+  max-width: 320px;
 }
 .mic-dot {
   width: 8px;
@@ -1391,6 +1421,7 @@ textarea {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+  flex: 0 1 auto;
 }
 
 .voice .command {
