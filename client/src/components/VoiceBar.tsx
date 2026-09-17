@@ -79,6 +79,9 @@ export function VoiceBar() {
 
   const state: VoiceState = emergency ? "off" : micBlocked ? "unavailable" : !listening ? (voice?.state === "unavailable" ? "unavailable" : "off") : voice?.state ?? "standby";
   const engine = voice?.engine;
+  // The small models understand Hebrew on paper and get the words wrong in
+  // practice, which reads as "JARVIS ignores me" rather than as a model choice.
+  const weakModel = /ggml-(small|base|tiny)/i.test(engine?.model ?? "");
   const wake = voice?.wakePhrases ?? [];
   const stops = voice?.stopPhrases ?? [];
   const online = connection === "online";
@@ -139,6 +142,12 @@ export function VoiceBar() {
               {heard.text
                 ? <>Heard <q>{heard.text}</q> — that is not the wake phrase.</>
                 : <>Something was heard, but no words came back from the speech engine. Speak a little closer, or check that Windows is using the microphone you are speaking into.</>}
+              {heard.text && weakModel && (
+                <>
+                  {" "}
+                  <span className="voice-fix">This computer is using {engine?.model}, which mishears Hebrew. Run <code>npm run voice</code> and take the turbo model (free, 1.6 GB) — that is usually the whole problem.</span>
+                </>
+              )}
             </p>
           )}
         </div>

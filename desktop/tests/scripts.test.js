@@ -160,3 +160,42 @@ test("an incomplete desktop app is named, not launched into Electron's welcome w
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("the icons are generated, square, and one per tray state", async () => {
+  // The icons are code now, not committed artwork, so the generator is what
+  // has to stay correct: a missing tray state means a tray with no picture.
+  const out = path.join(ROOT, "desktop", "assets");
+  const before = fs.readdirSync(out).filter((f) => f.endsWith(".png")).sort();
+  const { runSync } = await import("../../scripts/spawn-compat.mjs");
+  const r = runSync(process.execPath, [path.join(ROOT, "scripts", "make-icons.mjs")], { encoding: "utf8" });
+  assert.equal(r.status, 0, String(r.stdout) + String(r.stderr));
+  const after = fs.readdirSync(out).filter((f) => f.endsWith(".png")).sort();
+  assert.deepEqual(after, before, "the generator must produce exactly the icon set that ships");
+
+  // main.js asks for tray-<state>.png at three sizes; every state must answer.
+  const states = ["connected", "listening", "busy", "paused", "offline", "emergency_stopped"];
+  for (const s of states) {
+    for (const suffix of ["", "-32", "-256"]) {
+      const file = path.join(out, `tray-${s}${suffix}.png`);
+      assert.ok(fs.existsSync(file), `${file} is missing`);
+    }
+  }
+  assert.ok(fs.existsSync(path.join(out, "icon.png")), "the window icon is missing");
+
+  // Real PNGs, and square at the size the name promises.
+  const dims = (file) => {
+    const b = fs.readFileSync(file);
+    assert.equal(b.subarray(1, 4).toString("ascii"), "PNG", `${file} is not a PNG`);
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  };
+  assert.deepEqual(dims(path.join(out, "icon.png")), { w: 256, h: 256 });
+  assert.deepEqual(dims(path.join(out, "tray-connected.png")), { w: 16, h: 16 });
+  assert.deepEqual(dims(path.join(out, "tray-connected-32.png")), { w: 32, h: 32 });
+  assert.deepEqual(dims(path.join(out, "tray-connected-256.png")), { w: 256, h: 256 });
+
+  // Each state has to look like itself, or the tray picture says nothing about
+  // what JARVIS is doing.
+  const hash = (file) => require("crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  const distinct = new Set(states.map((s) => hash(path.join(out, `tray-${s}-32.png`))));
+  assert.equal(distinct.size, states.length, "two tray states render identically");
+});

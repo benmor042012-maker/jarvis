@@ -1381,6 +1381,12 @@ textarea {
   color: var(--white);
   quotes: "\201C" "\201D";
 }
+.voice-fix {
+  color: var(--accent, var(--white));
+}
+.voice-fix code {
+  font-family: var(--font-mono, monospace);
+}
 .mic-pick {
   display: inline-flex;
   align-items: center;

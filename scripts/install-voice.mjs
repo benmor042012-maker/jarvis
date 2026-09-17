@@ -46,11 +46,17 @@ const MODEL_BASE = process.env.JARVIS_WHISPER_MODEL_BASE ?? "https://huggingface
 // Models, largest first. A model without ".en" in its name is multilingual and
 // understands Hebrew; the ".en" builds cannot, at any size.
 const MODELS = [
-  { id: "medium", file: "ggml-medium.bin", mb: 1533, needsGb: 16, why: "most accurate Hebrew, slower on an older PC" },
-  { id: "small", file: "ggml-small.bin", mb: 466, needsGb: 8, why: "good Hebrew, comfortable on most computers" },
-  { id: "base", file: "ggml-base.bin", mb: 148, needsGb: 4, why: "quick, but misses words more often" },
+  { id: "turbo", file: "ggml-large-v3-turbo.bin", mb: 1624, needsGb: 8, why: "by far the best Hebrew, and still fast — the one to take" },
+  { id: "medium", file: "ggml-medium.bin", mb: 1533, needsGb: 16, why: "accurate Hebrew, slower than turbo" },
+  { id: "small", file: "ggml-small.bin", mb: 466, needsGb: 8, why: "understands Hebrew, but mishears it often" },
+  { id: "base", file: "ggml-base.bin", mb: 148, needsGb: 4, why: "quick, and wrong on Hebrew more often than not" },
   { id: "tiny", file: "ggml-tiny.bin", mb: 75, needsGb: 2, why: "fastest and least accurate — for trying it out" },
 ];
+
+// Measured on this project's own wake phrase: "תתעורר" came back from the small
+// model as "תפקות". Hebrew is where the smaller models fall down, so anything
+// below turbo/medium is offered as an upgrade rather than left in place.
+const WEAK_HEBREW = new Set(["ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"]);
 
 const GB = 1024 ** 3;
 
@@ -239,11 +245,35 @@ try {
   // 2. The model.
   const already = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).find((f) => fs.existsSync(f) && looksLikeModel(f));
   let modelFile = already ?? null;
-  if (modelFile) {
+  if (modelFile && WEAK_HEBREW.has(path.basename(modelFile))) {
+    // Saying "already here" and stopping is how someone ends up with a model
+    // that hears "תפקות" when they say "תתעורר", with nothing suggesting the
+    // fix. Offer the better one; keeping what is there stays one Enter away.
+    warn(`The model here is ${path.basename(modelFile)}, which mishears Hebrew.`);
+    const best = MODELS.find((m) => m.needsGb <= ramGb) ?? MODELS[0];
+    const answer = (await ask(rl, `  Download ${best.file} instead (about ${String(best.mb)} MB, much better Hebrew)? [Y/n] `)).trim().toLowerCase();
+    if (answer === "" || answer === "y" || answer === "yes") {
+      const dest = path.join(SPEECH_DIR, best.file);
+      say(`Downloading ${best.file} (about ${String(best.mb)} MB). This is the long part.`);
+      await download(`${MODEL_BASE}/${best.file}`, dest, { label: "model", onProgress: progress("model") });
+      clearLine();
+      if (!looksLikeModel(dest)) {
+        fs.rmSync(dest, { force: true });
+        throw new Error("What came back is not a speech model — the file does not start with the GGML marker. Nothing was kept.");
+      }
+      // The old one stays on disk; it is the user's file and deleting a
+      // 466 MB download behind their back is not ours to do.
+      modelFile = dest;
+      ok(`Model installed: ${path.basename(modelFile)} (${fmtMb(fs.statSync(modelFile).size)})`);
+      console.log(`  ${C.dim}The previous model is still in ${SPEECH_DIR} — delete it yourself if you want the space back.${C.r}`);
+    } else {
+      ok(`Keeping ${path.basename(modelFile)}.`);
+    }
+  } else if (modelFile) {
     ok(`A speech model is already here: ${path.basename(modelFile)}`);
   } else {
     const fits = MODELS.filter((m) => m.needsGb <= ramGb);
-    const suggested = fits.find((m) => m.id === "small") ?? fits[0] ?? MODELS[MODELS.length - 1];
+    const suggested = fits[0] ?? MODELS[MODELS.length - 1];
     console.log(`\n  This computer has about ${String(ramGb)} GB of RAM. Models that understand Hebrew:`);
     for (const m of MODELS) {
       const mark = m.id === suggested.id ? `${C.g}→${C.r}` : " ";
