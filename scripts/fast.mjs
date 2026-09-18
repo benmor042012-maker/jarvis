@@ -22,7 +22,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { LADDER, pickFastest } from "./lib/pick-model.mjs";
-import { download } from "./lib/whisper-install.mjs";
+import { download, looksLikeModel } from "./lib/whisper-install.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", g: "\x1b[32m", y: "\x1b[33m", c: "\x1b[36m", red: "\x1b[31m" };
@@ -135,6 +135,13 @@ const out = await pickFastest({
   fetchModel: async (file, dest) => {
     try {
       await download(`${MODEL_BASE}/${file}`, dest, { label: file });
+      // What came back has to be a model. A half-finished download, or a web
+      // page from a link that redirected, looks like a file and then makes the
+      // engine fail with "failed to initialize whisper context" days later.
+      if (!looksLikeModel(dest)) {
+        unlinkSync(dest);
+        throw new Error("what came back is not a speech model (the file does not start with the GGML marker), so it was deleted");
+      }
       console.log("done");
     } catch (e) {
       // A half-written file would look installed next time round.

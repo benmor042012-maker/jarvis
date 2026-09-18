@@ -101,6 +101,14 @@ test("a configured main.exe is replaced by the whisper-cli.exe beside it", async
   }
 });
 
+/** A file that passes for a model: the GGML marker, and big enough to be one. */
+function fakeModel(file) {
+  const fs = require("fs");
+  const buf = Buffer.alloc(1024 * 1024 + 16);
+  buf.write("ggml", 0, "ascii");
+  fs.writeFileSync(file, buf);
+}
+
 test("a model that cannot do Hebrew gives way; a model chosen on purpose does not", async () => {
   const fs = require("fs");
   const os = require("os");
@@ -111,7 +119,7 @@ test("a model that cannot do Hebrew gives way; a model chosen on purpose does no
   const turbo = path.join(dir, "ggml-large-v3-turbo.bin");
   try {
     fs.writeFileSync(bin, "x");
-    fs.writeFileSync(tooPoor, "ggml");
+    fakeModel(tooPoor);
 
     // On its own, what is configured is what there is.
     let d = await stt.detect({ voice: { whisperPath: bin, whisperModel: tooPoor } }, { force: true });
@@ -119,14 +127,14 @@ test("a model that cannot do Hebrew gives way; a model chosen on purpose does no
 
     // With something usable beside it, base gives way without anyone editing
     // config.json.
-    fs.writeFileSync(small, "ggml");
+    fakeModel(small);
     d = await stt.detect({ voice: { whisperPath: bin, whisperModel: tooPoor } }, { force: true });
     assert.equal(d.model, small);
 
     // But small configured with turbo beside it stays small. This used to swap
     // itself for the large model and spend several seconds a sentence doing it
     // — undoing, silently, the one choice that makes JARVIS quick to talk to.
-    fs.writeFileSync(turbo, "ggml");
+    fakeModel(turbo);
     d = await stt.detect({ voice: { whisperPath: bin, whisperModel: small } }, { force: true });
     assert.equal(d.model, small, "a model chosen on purpose is not a fault to correct");
     assert.equal(d.hebrew, true);
@@ -271,6 +279,48 @@ test("the model is kept in memory when the download came with a server", async (
   } finally {
     stub.close();
     server.stop("test over");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a damaged model file is named as the problem, before anything is transcribed", async () => {
+  // What a half-finished download does on a real machine: whisper.cpp says
+  // "failed to initialize whisper context" — which sounds like the engine is
+  // broken, so people reinstall the engine and the model stays broken. Worse,
+  // it says it seconds after you speak, once per sentence, for ever.
+  const fs = require("fs");
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-damaged-"));
+  const bin = path.join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli");
+  const broken = path.join(dir, "ggml-base.bin");
+  try {
+    fs.writeFileSync(bin, "x");
+    // A web page, which is what an unauthenticated link hands back.
+    fs.writeFileSync(broken, Buffer.alloc(2 * 1024 * 1024, "<"));
+
+    const d = await stt.detect({ voice: { whisperPath: bin, whisperModel: broken, modelPinned: true } }, { force: true });
+    assert.equal(d.available, false, "a file that is not a model cannot transcribe, and must not be offered as if it could");
+    assert.match(d.reason, /damaged/i);
+    assert.match(d.reason, /ggml-base\.bin/);
+    assert.match(d.install.note, /npm run voice/);
+
+    // A truncated download is caught by its size alone.
+    fs.writeFileSync(broken, "ggml");
+    assert.equal(stt.isModelFile(broken), false, "four bytes is not a model");
+
+    // And a real one passes.
+    fakeModel(broken);
+    assert.equal(stt.isModelFile(broken), true);
+
+    // The engine's own wording, when it gets that far, is translated too.
+    const err = stt.engineFailure(
+      { code: 3, stderr: "load_backend: loaded CPU backend\nerror: failed to initialize whisper context\n" },
+      { binary: bin, model: broken, engine: "whisper.cpp" },
+    );
+    assert.equal(err.code, "speech_model_damaged");
+    assert.match(err.message, /file is damaged/i);
+    assert.match(err.message, /npm run voice/);
+  } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
