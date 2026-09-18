@@ -272,7 +272,10 @@ test("voice, alert and phone routes are reachable and honest over HTTP", async (
   assert.equal(v.status, 200);
   assert.equal(v.body.engine.available, false, "no speech engine is installed on CI");
   assert.ok(v.body.engine.install.windows.length >= 3, "it must say exactly how to install one");
-  assert.deepEqual(v.body.wakePhrases, ["תתעורר", "hey jarvis"]);
+  // The route reports whatever is configured; which spellings ship by default
+  // is config's business, and voice.test.js pins the matching itself.
+  assert.ok(v.body.wakePhrases.includes("תתעורר"), JSON.stringify(v.body.wakePhrases));
+  assert.ok(v.body.wakePhrases.includes("hey jarvis"), JSON.stringify(v.body.wakePhrases));
 
   // Audio upload needs its own short-lived token and refuses without one.
   const noToken = await fetch(base + "/api/voice/utterance", { method: "POST", body: Buffer.alloc(100) });

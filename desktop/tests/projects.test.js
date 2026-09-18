@@ -9,14 +9,33 @@ let agent, base, owner, c;
 test.before(async () => { ({ agent, base } = await startAgent()); owner = agent.ownerDevice(); c = client(base, owner); });
 test.after(() => agent.stop());
 
-async function waitTask(id) {
-  let t;
-  for (let i = 0; i < 600; i++) {
-    t = (await c.call("projects/get", { task_id: id })).body.task;
+/**
+ * Poll a project task until it settles.
+ *
+ * Ten times a second is faster than the agent's own limit of 240 requests a
+ * minute, so on a machine slow enough to need more than four minutes' worth of
+ * polls the poll itself is refused — and reading .status off that refusal threw
+ * "Cannot read properties of undefined", which says nothing about what
+ * happened. Windows CI hit exactly that. Poll at a rate the agent allows, and
+ * say what came back when it is not a task.
+ */
+async function waitTask(id, timeoutMs = 180000) {
+  const every = 400;
+  let last = null;
+  for (let waited = 0; waited < timeoutMs; waited += every) {
+    const res = await c.call("projects/get", { task_id: id });
+    const t = res.body.task;
+    if (!t) {
+      last = `${String(res.status)} ${JSON.stringify(res.body)}`;
+      // A refused poll is not a finished task: wait and ask again.
+      await new Promise((r) => setTimeout(r, every));
+      continue;
+    }
+    last = null;
     if (!["running", "cancelling", "planned"].includes(t.status)) return t;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, every));
   }
-  return t;
+  throw new Error(`the task never settled within ${String(timeoutMs)}ms${last ? `; the last answer was ${last}` : ""}`);
 }
 
 test("templates are listed", async () => {

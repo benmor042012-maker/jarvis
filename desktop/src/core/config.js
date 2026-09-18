@@ -31,7 +31,11 @@ const DEFAULTS = {
     // uploaded or kept.
     enabled: true,
     language: "he",
-    wakePhrases: ["תתעורר", "hey jarvis"],
+    // Several spellings of the same two calls. A local model writing down one
+    // short word picks a different spelling each time, and "hey jarvis" with
+    // Hebrew forced comes back in Hebrew letters — so the ways it actually
+    // arrives are all listed rather than left to near-miss matching alone.
+    wakePhrases: ["תתעורר", "התעורר", "תעורר", "היי ג'רביס", "הי ג'רביס", "hey jarvis"],
     stopPhrases: ["עצור", "תעצור", "חירום", "stop", "emergency"],
     quietHours: { enabled: false, start: "22:00", end: "07:00" },
     maxListenMs: 15000,

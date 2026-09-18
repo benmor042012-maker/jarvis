@@ -50,6 +50,9 @@ export function VoiceBar() {
   const emergencyStop = useJarvis((s) => s.emergencyStop);
   const heard = useJarvis((s) => s.heard);
   const micSilent = useJarvis((s) => s.micSilent);
+  const transcribing = useJarvis((s) => s.transcribing);
+  const slow = useJarvis((s) => s.slow);
+  const skipped = useJarvis((s) => s.skipped);
   const micDevices = useJarvis((s) => s.micDevices);
   const micDeviceId = useJarvis((s) => s.micDeviceId);
   const setMicDevice = useJarvis((s) => s.setMicDevice);
@@ -60,10 +63,10 @@ export function VoiceBar() {
   // The "heard" line is only useful while it is recent, so a tick retires it
   // instead of leaving a stale transcript on screen.
   useEffect(() => {
-    if (!heard) return;
+    if (!heard && !transcribing) return;
     const t = window.setInterval(() => { setNow(Date.now()); }, 1000);
     return () => { window.clearInterval(t); };
-  }, [heard]);
+  }, [heard, transcribing]);
 
   // The browser stops delivering audio when the tab is frozen; reflect that
   // rather than showing a listening indicator that is no longer true.
@@ -137,6 +140,12 @@ export function VoiceBar() {
             {listening && <span className="mic-dot" aria-hidden="true" />}
           </strong>
           <p>{hint}</p>
+          {transcribing && (
+            <p className="voice-working" role="status">
+              Working out what you said… {Math.max(0, Math.round((now - transcribing.since) / 1000))}s
+              {skipped > 0 && ` · ${String(skipped)} skipped while thinking`}
+            </p>
+          )}
           {listening && heard && now - heard.at < 20000 && (state === "standby" || state === "quiet_hours") && (
             <p className="voice-heard">
               {heard.text
@@ -191,6 +200,20 @@ export function VoiceBar() {
         <div className="banner banner-warn">
           <strong>Speech to text is unavailable: {engine.reason}</strong>
           <InstallSteps install={engine.install} />
+        </div>
+      )}
+
+      {/* Not hidden while the next utterance is in flight: on a machine this
+          slow there is almost always one in flight, and the warning would
+          flicker in and out of existence exactly when it is most needed. */}
+      {slow && (
+        <div className="banner banner-warn" role="note">
+          <strong>This computer needs {String(Math.round(slow.ms / 1000))} seconds to understand one sentence.</strong>
+          <p>
+            Nothing is broken — {slow.model ?? "the speech model"} is simply heavier than this processor can turn around quickly, and
+            everything said while it is thinking is skipped. A smaller model answers in about a second and is a little less accurate:
+            run <code>npm run voice</code> and choose <code>small</code>. Speaking one short sentence at a time also helps.
+          </p>
         </div>
       )}
 

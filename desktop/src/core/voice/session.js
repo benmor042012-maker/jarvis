@@ -8,7 +8,7 @@ const EventEmitter = require("events");
 
 const audit = require("../audit");
 const stt = require("./stt");
-const { matchAny, normalize, stripPhrase, words } = require("./phrases");
+const { matchAny, matchClose, normalize, stripPhrase, words } = require("./phrases");
 
 const STATES = ["unavailable", "permission_required", "off", "standby", "listening", "thinking", "speaking", "paused", "muted", "quiet_hours"];
 
@@ -51,6 +51,7 @@ class VoiceSession extends EventEmitter {
     this.lastWakeAt = 0;
     this.listeningUntil = 0;
     this.lastHeard = null;
+    this.lastTookMs = null;
     this.lastError = null;
     this.stats = { wakes: 0, falseWakes: 0, commands: 0, stops: 0, utterances: 0 };
     this.history = [];
@@ -185,7 +186,12 @@ class VoiceSession extends EventEmitter {
     }
 
     const text = heard.text;
-    this.lastHeard = { text, at: Date.now(), engine: heard.engine, source };
+    this.lastHeard = { text, at: Date.now(), engine: heard.engine, source, took_ms: heard.tookMs ?? null, model: heard.model ?? null };
+    // How long the engine took is part of the answer to "why is it not doing
+    // anything": a large model on a modest computer can spend half a minute on
+    // one sentence, which from the outside is indistinguishable from ignoring
+    // the person entirely.
+    this.lastTookMs = heard.tookMs ?? null;
     const quiet = inQuietHours(v.quietHours);
 
     // 1. Stop phrases, first and without any model.
@@ -212,11 +218,16 @@ class VoiceSession extends EventEmitter {
 
     // 2. Standby: only a wake phrase matters.
     if (!listening) {
-      const phrase = matchAny(text, v.wakePhrases || []);
+      // Near misses count: a local model transcribing one short Hebrew word
+      // drops a letter often, and "תתעור" for "תתעורר" is the person calling
+      // JARVIS, not someone else talking. How near is decided in phrases.js;
+      // the false-wake rules below still apply to every wake, near or exact.
+      const close = matchClose(text, v.wakePhrases || []);
+      const phrase = close?.phrase ?? null;
       if (!phrase) {
         this._set("standby", "not_for_jarvis");
         this._remember({ kind: "ignored", text });
-        return { action: "ignored", reason: "no_wake_phrase", text };
+        return { action: "ignored", reason: "no_wake_phrase", text, took_ms: this.lastTookMs };
       }
       // False-wake protection: a real wake utterance is short, long enough to
       // be speech, and not a repeat inside the cool-down window.
@@ -239,14 +250,14 @@ class VoiceSession extends EventEmitter {
       this.stats.wakes++;
       this.listeningUntil = Date.now() + (v.maxListenMs || 15000);
       this._set("listening", "wake");
-      audit.log({ event: "voice_wake", device: device?.name, detail: { phrase, source } });
-      this._remember({ kind: "wake", text, phrase });
+      audit.log({ event: "voice_wake", device: device?.name, detail: { phrase, source, heard: text, near: close.distance } });
+      this._remember({ kind: "wake", text, phrase, near: close.distance });
       this.emit("event", { type: "voice", event: "woke", phrase, until: this.listeningUntil });
 
       // "תתעורר פתח פנקס רשימות" — the command rode along with the wake phrase.
-      const rest = stripPhrase(text, phrase);
+      const rest = stripPhrase(text, phrase, { near: close.distance });
       if (rest && words(rest).length >= 1) return this._runCommand(rest, { device, source, viaWake: true });
-      return { action: "woke", phrase, listening_until: this.listeningUntil, text };
+      return { action: "woke", phrase, listening_until: this.listeningUntil, text, took_ms: this.lastTookMs };
     }
 
     // 3. Listening: this utterance is the command.

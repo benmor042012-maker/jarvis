@@ -213,3 +213,82 @@ test("nothing but transcripts is remembered, and audio is never kept by default"
   assert.ok(s.history.every((h) => !("audio" in h) && !("wav" in h)));
   assert.equal(config.load().voice.keepAudio, false);
 });
+
+test("a wake phrase one letter out still wakes JARVIS; a different word does not", async () => {
+  // From a real machine: "תתעורר" came back from the speech model as "תפקות",
+  // and the screen showed nothing. A better model fixes that word, but one
+  // letter dropped from a short Hebrew word is normal for every local model,
+  // and refusing it is indistinguishable from not listening at all.
+  const s = makeSession();
+
+  said = "תתעור"; // the last letter lost
+  let r = await s.handleUtterance(wav(), { durationMs: 900 });
+  assert.equal(r.action, "woke", `a near miss must wake: ${JSON.stringify(r)}`);
+  assert.equal(r.phrase, "תתעורר", "and it reports the phrase it was near");
+  // The transcript is kept as it arrived, not rewritten into what we hoped for.
+  assert.equal(s.history.at(-1).text, "תתעור");
+  assert.equal(s.history.at(-1).near, 1);
+
+  // Far enough away is still nothing: this is the word that actually came back
+  // on that machine, and it must not wake anything.
+  const fresh = makeSession();
+  said = "תפקות";
+  r = await fresh.handleUtterance(wav(), { durationMs: 900 });
+  assert.equal(r.action, "ignored");
+  assert.equal(r.reason, "no_wake_phrase");
+
+  // And ordinary speech stays ordinary speech.
+  for (const sentence of ["מה השעה", "שלום מה קורה", "תעשה לי קפה"]) {
+    const other = makeSession();
+    said = sentence;
+    const out = await other.handleUtterance(wav(), { durationMs: 1200 });
+    assert.equal(out.action, "ignored", `"${sentence}" must not wake JARVIS: ${JSON.stringify(out)}`);
+  }
+});
+
+test("a near miss is held to the same false-wake rules as an exact one", async () => {
+  const s = makeSession();
+  said = "תתעור";
+  // Too short to be speech.
+  let r = await s.handleUtterance(wav(), { durationMs: 100 });
+  assert.equal(r.reason, "false_wake_protection");
+  // Buried in a sentence.
+  said = "אמרתי לו תתעור כבר וזה לא עזר בכלל שוב";
+  r = await s.handleUtterance(wav(), { durationMs: 2000 });
+  assert.equal(r.reason, "false_wake_protection");
+  assert.equal(s.state, "standby");
+});
+
+test("the phrase matcher's tolerance is one letter in four, and never for short words", () => {
+  const { matchClose, nearness } = phrases;
+  // Two letters out of six is not a near miss.
+  assert.equal(matchClose("תתקורך", ["תתעורר"]), null);
+  // A three-letter phrase gets no tolerance at all: too much else fits inside.
+  assert.equal(nearness("עצוב", ["עצור"][0]), null);
+  assert.equal(nearness("עצור", "עצור"), 0);
+  // Exact matches always win, and report zero distance.
+  assert.deepEqual(matchClose("hey jarvis", ["תתעורר", "hey jarvis"]), { phrase: "hey jarvis", distance: 0 });
+  assert.deepEqual(matchClose("hey jarvi", ["hey jarvis"]), { phrase: "hey jarvis", distance: 1 });
+  assert.equal(matchClose("", ["תתעורר"]), null);
+  assert.equal(matchClose("תתעורר", []), null);
+});
+
+test("a command riding on a near-miss wake word keeps only the command", async () => {
+  // The bug this pins: the wake phrase is recognised as a near miss, so it is
+  // not in the transcript to remove letter for letter — and the misheard
+  // spelling was handed to the planner as the command. "תתעור" became
+  // something JARVIS went looking for.
+  const s = makeSession();
+  said = "תתעור פתח פנקס רשימות";
+  const r = await s.handleUtterance(wav(), { durationMs: 1500 });
+  assert.equal(r.action, "command", JSON.stringify(r));
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].text, "פתח פנקס רשימות", "the misheard wake word must not be part of the command");
+
+  // And a near-miss wake on its own is a wake, not a one-word command.
+  const alone = makeSession();
+  said = "תתעור";
+  const w = await alone.handleUtterance(wav(), { durationMs: 900 });
+  assert.equal(w.action, "woke", JSON.stringify(w));
+  assert.equal(commands.length, 0, "nothing may be run for a bare wake");
+});
