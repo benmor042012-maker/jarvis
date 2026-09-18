@@ -62,6 +62,12 @@ function modelCandidates(cfg) {
   // A better model that arrived next to a weak configured one wins, the same
   // way a working program beside a retired one does: someone who downloaded it
   // should not have to edit config.json to get the Hebrew they came for.
+  //
+  // Unless the model was pinned. `npm run fast` measures the models on the
+  // machine in front of it and picks the one that can actually keep up, which
+  // on a modest processor is a small one — and quietly promoting it back to the
+  // heavy one would undo the only thing that made JARVIS answer in a second.
+  if (configured && cfg.voice?.modelPinned) return [configured];
   if (configured && WEAK_MODELS.includes(path.basename(configured).toLowerCase())) {
     const dir = path.dirname(configured);
     for (const name of BETTER_MODELS) {
@@ -161,12 +167,19 @@ function remember(modelPath, tookMs) {
   speed.set(modelPath, seen);
 }
 
-/** Every multilingual model sitting beside this one, smallest file first. */
+/**
+ * Every multilingual model sitting beside this one, smallest file first.
+ *
+ * tiny is included, but only ever reached when everything above it has been
+ * measured as too slow as well: on a modest processor the choice is not
+ * between tiny and small, it is between tiny and waiting twelve seconds. The
+ * switch is never silent — the window names both models and the measurement.
+ */
 function modelsBeside(modelPath) {
   const dir = path.dirname(modelPath);
   let names = [];
   try {
-    names = fs.readdirSync(dir).filter((n) => /^ggml-.*\.bin$/i.test(n) && !/\.en\.bin$/i.test(n) && !/-tiny/i.test(n));
+    names = fs.readdirSync(dir).filter((n) => /^ggml-.*\.bin$/i.test(n) && !/\.en\.bin$/i.test(n));
   } catch {
     return [];
   }
@@ -521,4 +534,4 @@ function cleanup(text) {
 }
 
 module.exports = {
-  speedReport, whisperArgs, chooseModel, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
+  speedReport, whisperArgs, chooseModel, modelCandidates, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };

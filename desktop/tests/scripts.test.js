@@ -199,3 +199,140 @@ test("the icons are generated, square, and one per tray state", async () => {
   const distinct = new Set(states.map((s) => hash(path.join(out, `tray-${s}-32.png`))));
   assert.equal(distinct.size, states.length, "two tray states render identically");
 });
+
+test("npm run fast: the choice walks down only as far as it must, and stops at the first that keeps up", async () => {
+  // The decision, with the engine and the network taken out: a stand-in speech
+  // engine cannot be spawned on Windows at all (no shebang, and Node refuses a
+  // .cmd without a shell), and which model JARVIS ends up using is exactly the
+  // thing that should be covered on the platform most people run it on.
+  const { pickFastest, below, LADDER } = await import(require("url").pathToFileURL(path.join(SCRIPTS, "lib", "pick-model.mjs")).href);
+  const join = (...p) => p.join("/");
+  const speechDir = "/speech";
+
+  // A computer where small needs 12 seconds — the machine in the screenshot —
+  // and base answers in under a second.
+  const times = { "ggml-small.bin": 12000, "ggml-base.bin": 900, "ggml-tiny.bin": 200 };
+  const downloaded = [];
+  const measured = [];
+  const here = new Set(["/speech/ggml-small.bin"]);
+  const run = (over = {}) =>
+    pickFastest({
+      current: "/speech/ggml-small.bin",
+      speechDir,
+      join,
+      targetMs: 1200,
+      exists: (p) => here.has(p),
+      measure: (p) => { measured.push(path.posix.basename(p)); return Promise.resolve(times[path.posix.basename(p)]); },
+      fetchModel: (file, dest) => { downloaded.push(file); here.add(dest); return Promise.resolve(); },
+      ...over,
+    });
+
+  const out = await run();
+  assert.equal(out.model, "/speech/ggml-base.bin");
+  assert.equal(out.took, 900);
+  assert.equal(out.before, 12000, "it reports what the old model really cost");
+  assert.equal(out.changed, true);
+  assert.deepEqual(measured, ["ggml-small.bin", "ggml-base.bin"], "it stops at the first that keeps up");
+  assert.deepEqual(downloaded, ["ggml-base.bin"], "tiny is never fetched when base is fast enough");
+
+  // Already fast: nothing is downloaded and nothing is measured beyond the one.
+  const quick = await pickFastest({
+    current: "/speech/ggml-small.bin", speechDir, join, targetMs: 1200,
+    exists: () => true,
+    measure: () => Promise.resolve(800),
+    fetchModel: () => { throw new Error("must not download"); },
+  });
+  assert.equal(quick.changed, false);
+  assert.equal(quick.model, "/speech/ggml-small.bin");
+
+  // A computer where even tiny cannot keep up still gets the fastest of them,
+  // and the caller can see it is still over the target rather than be told a
+  // number that was never measured.
+  const slowTimes = { "ggml-small.bin": 12000, "ggml-base.bin": 6000, "ggml-tiny.bin": 3000 };
+  const hopeless = await pickFastest({
+    current: "/speech/ggml-small.bin", speechDir, join, targetMs: 1200,
+    exists: (p) => p === "/speech/ggml-small.bin",
+    measure: (p) => Promise.resolve(slowTimes[path.posix.basename(p)]),
+    fetchModel: () => Promise.resolve(),
+  });
+  assert.equal(path.posix.basename(hopeless.model), "ggml-tiny.bin");
+  assert.equal(hopeless.took, 3000);
+  assert.ok(hopeless.took > 1200, "and it is still over target, which the script says out loud");
+
+  // A model that cannot be downloaded is skipped, not fatal.
+  const skipped = await pickFastest({
+    current: "/speech/ggml-small.bin", speechDir, join, targetMs: 1200,
+    exists: (p) => p === "/speech/ggml-small.bin",
+    measure: (p) => Promise.resolve(slowTimes[path.posix.basename(p)]),
+    fetchModel: (file) => (file === "ggml-base.bin" ? Promise.reject(new Error("offline")) : Promise.resolve()),
+  });
+  assert.equal(path.posix.basename(skipped.model), "ggml-tiny.bin");
+
+  // The ladder is heaviest first and multilingual only: an .en model cannot do
+  // Hebrew at any size, so none may appear here.
+  assert.deepEqual([...LADDER].sort((a, b) => b.mb - a.mb).map((m) => m.file), LADDER.map((m) => m.file));
+  assert.ok(!LADDER.some((m) => /\.en\./.test(m.file)));
+  assert.deepEqual(below("ggml-base.bin").map((m) => m.file), ["ggml-tiny.bin"]);
+  assert.deepEqual(below("ggml-tiny.bin"), [], "nothing below the smallest");
+});
+
+test("the voice installer offers every model, and a name that is not downloaded yet is fetched", async () => {
+  // The gap this closes, seen on a real machine: with ggml-small already here,
+  // the menu listed only what was on the disk, and typing the name of anything
+  // else did nothing at all — so the one answer to "this computer needs twelve
+  // seconds a sentence", a smaller model, could not be given from the installer.
+  // The installer reads its answer from a terminal, which a test cannot supply
+  // (piped stdin is not a TTY and the prompt returns ""), so the rule itself is
+  // what is covered here.
+  const { resolveChoice } = await import(require("url").pathToFileURL(path.join(SCRIPTS, "lib", "pick-model.mjs")).href);
+  const MODELS = [
+    { id: "small", file: "ggml-small.bin", mb: 466 },
+    { id: "base", file: "ggml-base.bin", mb: 148 },
+    { id: "tiny", file: "ggml-tiny.bin", mb: 75 },
+  ];
+  const dir = "/speech";
+  const here = new Set(["/speech/ggml-small.bin"]);
+  const ask = (want) => resolveChoice(want, "/speech/ggml-small.bin", { exists: (f) => here.has(f), join: (...p) => p.join("/"), dir, models: MODELS });
+
+  assert.deepEqual(ask("base"), { kind: "download", file: "/speech/ggml-base.bin", model: MODELS[1] }, "not here yet: fetch it");
+  here.add("/speech/ggml-base.bin");
+  assert.equal(ask("base").kind, "use", "already here: just switch");
+  assert.equal(ask("").kind, "keep", "Enter keeps what is in use");
+  assert.equal(ask("small").kind, "keep", "asking for the one in use changes nothing");
+  assert.equal(ask("BASE").kind, "use", "the answer is not case-sensitive");
+  assert.equal(ask("ggml-tiny.bin").kind, "download", "the file name works as well as the short name");
+  const nonsense = ask("enormous");
+  assert.equal(nonsense.kind, "unknown");
+  assert.equal(nonsense.answer, "enormous");
+  assert.equal(nonsense.file, "/speech/ggml-small.bin", "and nothing changes");
+});
+
+test("npm run fast is wired, asks for nothing paid, and says so when there is no engine to measure", () => {
+  const os = require("os");
+  const { spawnSync } = require("child_process");
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  assert.equal(pkg.scripts.fast, "node scripts/fast.mjs");
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-fast-"));
+  const r = spawnSync(process.execPath, [path.join(SCRIPTS, "fast.mjs")], {
+    encoding: "utf8", timeout: 60000, env: { ...process.env, JARVIS_HOME: home },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /speech engine is not installed/i);
+  assert.match(r.stdout, /npm run voice/);
+  assert.ok(!/api[_-]?key|account|subscription|credit card/i.test(r.stdout), "nothing to pay for");
+});
+
+test("a pinned model is used as configured, not promoted to the heavier one beside it", () => {
+  const os = require("os");
+  const stt = require("../src/core/voice/stt.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-pin-"));
+  const tiny = path.join(dir, "ggml-tiny.bin");
+  const small = path.join(dir, "ggml-small.bin");
+  fs.writeFileSync(tiny, "t");
+  fs.writeFileSync(small, "s");
+  // Unpinned, the better model beside a weak one wins (someone who downloaded
+  // small should get it). Pinned, the measured choice stands.
+  assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny } }), [small, tiny]);
+  assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny, modelPinned: true } }), [tiny]);
+});

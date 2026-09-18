@@ -18,6 +18,7 @@
     "typecheck": "npm --prefix client run typecheck",
     "verify": "node scripts/verify.mjs",
     "e2e": "node scripts/e2e.mjs",
-    "bench:voice": "node scripts/bench-voice.mjs"
+    "bench:voice": "node scripts/bench-voice.mjs",
+    "fast": "node scripts/fast.mjs"
   }
 }

@@ -63,6 +63,16 @@ npm run voice
 בלבד (יש כפתור *Hear this voice* כדי לשמוע). קול עברי חינמי מוסיפים ב-Windows:
 Settings → Time & language → Speech → Manage voices.
 
+**אם הוא איטי אצלכם — פקודה אחת:**
+
+```
+npm run fast
+```
+
+היא מודדת את המודלים על המחשב **שלכם**, מורידה מודל קטן יותר בחינם אם צריך, בוחרת את המהיר
+ביותר שעדיין מבין עברית, ומדפיסה את המספרים לפני ואחרי. אם גם הקטן ביותר איטי כאן — היא אומרת
+את זה בשניות במקום להבטיח. מודל קטן יותר טועה יותר בעברית; מילת ההערה לא מושפעת בכלל.
+
 **לדיבור — קחו את `small` (466 מגה, חינם).** הוא עונה בערך בשנייה, וזה מה שהופך את זה לשיחה.
 `turbo` מדייק יותר, אבל לוקח כמה שניות למשפט על מחשב רגיל — קחו אותו רק אם דיוק חשוב לכם יותר
 ממהירות. אם המודל שמותקן איטי מדי כאן, ג'רביס עובר לבד למודל המהיר יותר שכבר קיים אצלכם ואומר
@@ -200,6 +210,7 @@ Telegram, SMS or email.
 npm run setup           # install + build + test
 npm run ai              # optional: install the local AI brain (Ollama + a model)
 npm run voice           # optional: install local speech recognition (whisper.cpp + a model)
+npm run fast            # measure the models here, take the fastest that still does Hebrew
 npm run bench:voice     # how long this computer takes: wake word, engine per model, the rest
 node scripts/make-icons.mjs  # redraw the window and tray icons (they are generated, not artwork)
 npm start               # desktop agent (or headless if Electron is missing)
