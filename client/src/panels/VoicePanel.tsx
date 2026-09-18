@@ -16,6 +16,7 @@ const KIND: Record<VoiceHistoryEntry["kind"], string> = {
   false_wake: "false wake, ignored",
   quiet_hours: "quiet hours, ignored",
   empty: "nothing heard",
+  follow_up: "kept listening for a follow-up",
 };
 
 export function VoicePanel() {
@@ -70,6 +71,12 @@ export function VoicePanel() {
             <dd>{voice?.wakePhrases.join(", ") || "—"}</dd>
             <dt>Stop phrases</dt>
             <dd>{voice?.stopPhrases.join(", ") || "—"}</dd>
+            <dt>Conversation</dt>
+            <dd>
+              {voice?.conversation
+                ? `on — after an answer JARVIS keeps listening for ${String(Math.round((voice.followUpMs ?? 8000) / 1000))} s, so the next sentence needs no wake word`
+                : "off — the wake word is needed for every command"}
+            </dd>
             <dt>Quiet hours</dt>
             <dd>{voice?.quietHours.enabled ? `${voice.quietHours.start ?? ""}–${voice.quietHours.end ?? ""}${voice.quietHours.active ? " (active now)" : ""}` : "off"}</dd>
             <dt>Keep recordings</dt>

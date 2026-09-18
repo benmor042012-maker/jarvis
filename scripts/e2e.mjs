@@ -242,6 +242,19 @@ try {
   await until("the transcript to appear in the log", () => page.isVisible("text=מה השעה"));
   check("the transcript is in the activity log", true);
 
+  // 5b. Conversation: after the answer the listening window reopens by itself,
+  //     so the next sentence needs no wake word. Nothing is relaxed to do it —
+  //     the stop phrase below still ends everything from inside that window.
+  await until("JARVIS to keep listening after answering", () => agent.voice.listeningUntil > Date.now(), 30000);
+  check("JARVIS keeps listening after it answers", true);
+  say("ותכתוב את זה");
+  const followUp = await until(
+    "the follow-up to be planned with no wake word in front of it",
+    () => agent.voice.history.some((h) => h.kind === "command" && h.text === "ותכתוב את זה"),
+    30000,
+  );
+  check("a follow-up command needs no wake word", !!followUp);
+
   // 6. A stop phrase stops everything, without a model.
   say("עצור");
   await until("the stop phrase", () => agent.status().emergency === true, 25000);

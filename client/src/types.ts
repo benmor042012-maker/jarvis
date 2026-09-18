@@ -150,7 +150,8 @@ export interface Settings {
   extraApps: { id: string; title?: string; path: string }[];
   allowedUrlHosts: string[];
   toolPolicies: Record<string, PolicyValue>;
-  tts: { enabled: boolean; lang: string };
+  /** voice: the name of an installed local voice, or "" for the first one for the language. */
+  tts: { enabled: boolean; lang: string; voice: string };
   voice: {
     enabled: boolean;
     language: string;
@@ -170,6 +171,9 @@ export interface Settings {
     keepModelLoaded: boolean;
     transcribeTimeoutMs: number;
     speakReplies: boolean;
+    /** Keep listening for a follow-up after an answer, so a conversation needs the wake word once. */
+    conversation: boolean;
+    followUpMs: number;
   };
   alerts: {
     enabled: boolean;
@@ -410,6 +414,8 @@ export interface VoiceStatus {
   stopPhrases: string[];
   quietHours: { enabled?: boolean; start?: string; end?: string; active: boolean };
   maxListenMs: number;
+  conversation: boolean;
+  followUpMs: number;
   keepAudio: boolean;
   paused: boolean;
   muted: boolean;
@@ -421,7 +427,7 @@ export interface VoiceStatus {
 
 export interface VoiceHistoryEntry {
   at: number;
-  kind: "stop" | "ignored" | "false_wake" | "quiet_hours" | "wake" | "empty" | "command";
+  kind: "stop" | "ignored" | "false_wake" | "quiet_hours" | "wake" | "empty" | "command" | "follow_up";
   text?: string;
   phrase?: string;
   why?: string;

@@ -16,12 +16,37 @@ export function speechAvailable(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
 
-export function pickVoice(lang: string): VoicePick {
+/**
+ * The voices installed on this computer, for the "which voice" list in
+ * Settings. Remote voices are left out entirely: they are not offered, so they
+ * cannot be chosen by accident.
+ */
+export function localVoices(): { name: string; lang: string }[] {
+  if (!speechAvailable()) return [];
+  return window.speechSynthesis
+    .getVoices()
+    .filter((v) => v.localService)
+    .map((v) => ({ name: v.name, lang: v.lang }))
+    .sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+}
+
+/**
+ * Which voice speaks. A name chosen in Settings wins — including one whose
+ * language tag differs from the reply's, because a person who picked a voice
+ * meant that voice. Otherwise the first local voice for the language.
+ */
+export function pickVoice(lang: string, preferred?: string | null): VoicePick {
   if (!speechAvailable()) return { voice: null, reason: "This browser has no speech synthesis, so JARVIS cannot speak here.", fix: "Open the JARVIS page in Chrome or Edge." };
   const wanted = lang.toLowerCase().slice(0, 2);
   const voices = window.speechSynthesis.getVoices();
   if (voices.length === 0) return { voice: null, reason: "The list of installed voices is not ready yet.", fix: null };
   const local = voices.filter((v) => v.localService);
+  if (preferred) {
+    const chosen = local.find((v) => v.name === preferred);
+    if (chosen) return { voice: chosen, reason: null, fix: null };
+    // The chosen voice is not here (uninstalled, or a different browser): fall
+    // through to the language, rather than staying silent over a name.
+  }
   const match = local.find((v) => v.lang.toLowerCase().startsWith(wanted)) ?? null;
   if (match) return { voice: match, reason: null, fix: null };
   if (voices.some((v) => v.lang.toLowerCase().startsWith(wanted))) {
@@ -39,14 +64,14 @@ export function pickVoice(lang: string): VoicePick {
 }
 
 /** Speak, resolving when the speech finishes (or immediately if it cannot). */
-export function speak(text: string, lang: string): Promise<{ spoken: boolean; reason: string | null; fix: string | null }> {
+export function speak(text: string, lang: string, preferred?: string | null): Promise<{ spoken: boolean; reason: string | null; fix: string | null }> {
   return new Promise((resolve) => {
     const clean = text.trim();
     if (!clean) {
       resolve({ spoken: false, reason: null, fix: null });
       return;
     }
-    const pick = pickVoice(lang);
+    const pick = pickVoice(lang, preferred);
     if (!pick.voice) {
       resolve({ spoken: false, reason: pick.reason, fix: pick.fix });
       return;
