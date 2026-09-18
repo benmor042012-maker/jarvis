@@ -51,6 +51,9 @@ export const api = {
   // --- voice ---------------------------------------------------------------
   voiceStatus: (force = false) => agentApi.call<Ok<VoiceStatus>>("voice/status", { force }, { timeoutMs: 20000 }),
   voiceMicrophone: (granted: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/microphone", { granted }),
+  /** The page's own wake-word detector heard the phrase. Nothing was transcribed. */
+  voiceWake: (durationMs: number, distance: number) =>
+    agentApi.call<{ action: string; reason?: string; detail?: string; status: VoiceStatus }>("voice/wake", { ms: Math.round(durationMs), distance }),
   voicePause: (paused: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/pause", { paused }),
   voiceMute: (muted: boolean) => agentApi.call<Ok<VoiceStatus>>("voice/mute", { muted }),
   voiceDoneSpeaking: () => agentApi.call<Ok<VoiceStatus>>("voice/done-speaking"),

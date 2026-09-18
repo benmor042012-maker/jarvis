@@ -292,3 +292,43 @@ test("a command riding on a near-miss wake word keeps only the command", async (
   assert.equal(w.action, "woke", JSON.stringify(w));
   assert.equal(commands.length, 0, "nothing may be run for a bare wake");
 });
+
+test("the window's own detector can wake JARVIS without any transcription", async () => {
+  // A full transcription of one word costs seconds; the page compares the shape
+  // of the sound instead, in about a millisecond. What it may not do is talk
+  // its way past any rule that guards a spoken wake.
+  const s = makeSession();
+  const r = s.wakeLocally({ durationMs: 900, distance: 2.4 });
+  assert.equal(r.action, "woke");
+  assert.equal(r.phrase, null, "nothing was transcribed, so no phrase is claimed");
+  assert.equal(r.detector, "local");
+  assert.equal(s.state, "listening");
+  // No invented transcript in the history either.
+  assert.equal(s.history.at(-1).text, "");
+  assert.equal(s.history.at(-1).detector, "local");
+
+  // The cool-down applies.
+  const again = s.wakeLocally({ durationMs: 900 });
+  assert.equal(again.reason, "false_wake_protection");
+
+  // Too short to be speech.
+  const brief = makeSession();
+  assert.equal(brief.wakeLocally({ durationMs: 50 }).reason, "false_wake_protection");
+
+  // Muted, paused and switched off all still refuse.
+  const muted = makeSession();
+  muted.setMuted(true);
+  assert.equal(muted.wakeLocally({ durationMs: 900 }).reason, "muted");
+  const paused = makeSession();
+  paused.setPaused(true);
+  assert.equal(paused.wakeLocally({ durationMs: 900 }).reason, "paused");
+  const off = makeSession({ enabled: false });
+  assert.equal(off.wakeLocally({ durationMs: 900 }).reason, "voice_disabled");
+
+  // Quiet hours suppress it exactly as they suppress a spoken wake.
+  const now = new Date();
+  const hh = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const quiet = makeSession({ quietHours: { enabled: true, start: hh(new Date(now.getTime() - 3600000)), end: hh(new Date(now.getTime() + 3600000)) } });
+  assert.equal(quiet.wakeLocally({ durationMs: 900 }).reason, "quiet_hours");
+  assert.equal(quiet.state, "standby");
+});
