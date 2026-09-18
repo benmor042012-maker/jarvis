@@ -138,6 +138,77 @@ const INSTALL_STEPS = {
 
 let cache = { at: 0, value: null };
 
+// How long each model has been taking on this computer, and the point past
+// which a spoken assistant stops being one. Nobody waits fifteen seconds to be
+// told the time.
+const TARGET_MS = 2500;
+const speed = new Map();
+
+function remember(modelPath, tookMs) {
+  const seen = speed.get(modelPath) ?? { runs: 0, avg: 0 };
+  // A running average over the last few runs: the first one includes the cost
+  // of loading the model from disk and is not representative.
+  seen.avg = seen.runs === 0 ? tookMs : seen.avg * 0.6 + tookMs * 0.4;
+  seen.runs += 1;
+  speed.set(modelPath, seen);
+}
+
+/** Every multilingual model sitting beside this one, smallest file first. */
+function modelsBeside(modelPath) {
+  const dir = path.dirname(modelPath);
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^ggml-.*\.bin$/i.test(n) && !/\.en\.bin$/i.test(n) && !/-tiny/i.test(n));
+  } catch {
+    return [];
+  }
+  return names
+    .map((n) => ({ file: path.join(dir, n), size: (() => { try { return fs.statSync(path.join(dir, n)).size; } catch { return Infinity; } })() }))
+    .sort((a, b) => a.size - b.size);
+}
+
+/**
+ * The model to actually run.
+ *
+ * The configured one, until this computer has shown twice that it cannot keep
+ * up with it — then the largest one beside it that can. This is never silent:
+ * status() reports which model is in use and why it changed. Nothing is
+ * downloaded and nothing is deleted; it only chooses between what is already
+ * installed.
+ */
+function chooseModel(chosen, seen, seenFor = () => null) {
+  if (!seen || seen.runs < 2 || seen.avg <= TARGET_MS) return { model: chosen, fallback: null };
+  let size = Infinity;
+  try { size = fs.statSync(chosen).size; } catch { /* keep Infinity */ }
+  const smaller = modelsBeside(chosen).filter((m) => m.size < size);
+  // The biggest of the ones that are smaller: as much accuracy as the computer
+  // can afford, rather than the smallest and least accurate.
+  let pick = smaller.at(-1);
+  if (!pick) return { model: chosen, fallback: null };
+  const already = seenFor(pick.file);
+  if (already && already.runs >= 2 && already.avg > TARGET_MS && smaller.length > 1) {
+    pick = smaller.at(-2); // even that one cannot keep up
+  }
+  return { model: pick.file, fallback: { from: path.basename(chosen), to: path.basename(pick.file), ms: Math.round(seen.avg) } };
+}
+
+function fastEnough(d) {
+  const out = chooseModel(d.model, speed.get(d.model), (f) => speed.get(f) ?? null);
+  fallback = out.fallback;
+  return out.model;
+}
+
+// The switch that has been made, if any, so the window can say so.
+let fallback = null;
+
+function speedReport() {
+  return {
+    fallback,
+    perModel: Object.fromEntries([...speed.entries()].map(([file, v]) => [path.basename(file), Math.round(v.avg)])),
+    targetMs: TARGET_MS,
+  };
+}
+
 /** What speech recognition is available right now, and if not — exactly why. */
 async function detect(cfg, { force = false } = {}) {
   if (!force && cache.value && Date.now() - cache.at < 15000) return cache.value;
@@ -238,6 +309,7 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
     e.install = d.install;
     throw e;
   }
+  const model = fastEnough(d);
   const file = tempWavPath();
   const startedAt = Date.now();
   fs.writeFileSync(file, wav, { mode: 0o600 });
@@ -251,8 +323,17 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       // On a large one it multiplies the slowest part of the run on exactly the
       // computers that can least afford it - and a wake phrase that arrives
       // forty seconds late is the same as one that never arrives.
-      const big = /large|medium/i.test(path.basename(d.model));
-      const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", big ? "1" : "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      const big = /large|medium/i.test(path.basename(model));
+      const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", big ? "1" : "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      // whisper always looks at a 30-second window, so a one-second command
+      // costs the same as half a minute of speech unless it is told otherwise.
+      // -ac trims the encoder to the audio that actually exists. This is the
+      // single biggest saving on short commands, which is all JARVIS ever gets.
+      const seconds = (wav.length - 44) / (16000 * 2);
+      if (seconds > 0 && seconds < 20) {
+        const ctx = Math.max(256, Math.min(1500, Math.ceil(((seconds + 1.5) / 30) * 1500 / 64) * 64));
+        args.push("-ac", String(ctx));
+      }
       // A one-word clip gives the model almost nothing to go on, and it will
       // guess at the language and the spelling. A plain sentence in the target
       // language as the initial prompt settles both. The wake phrase itself is
@@ -273,17 +354,21 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       } finally {
         try { fs.unlinkSync(txtFile); } catch { /* already gone */ }
       }
-      return { text: cleanup(text), engine: d.engine, model: path.basename(d.model), language, tookMs: Date.now() - startedAt };
+      const tookMs = Date.now() - startedAt;
+      remember(model, tookMs);
+      return { text: cleanup(text), engine: d.engine, model: path.basename(model), language, tookMs };
     }
     // Vosk, when the optional binding is installed.
     const vosk = require("vosk");
     vosk.setLogLevel(-1);
-    const model = new vosk.Model(d.model);
-    const rec = new vosk.Recognizer({ model, sampleRate: 16000 });
+    // Named apart from the chosen model path above: one `model` in this block
+    // shadowing the other put the whisper branch in a temporal dead zone.
+    const voskModel = new vosk.Model(d.model);
+    const rec = new vosk.Recognizer({ model: voskModel, sampleRate: 16000 });
     rec.acceptWaveform(wav.subarray(44));
     const out = rec.finalResult();
     rec.free();
-    model.free();
+    voskModel.free();
     return { text: cleanup(out.text || ""), engine: d.engine, model: path.basename(d.model), language, tookMs: Date.now() - startedAt };
   } finally {
     if (!keep) {
@@ -340,4 +425,5 @@ function cleanup(text) {
     .trim();
 }
 
-module.exports = { detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
+module.exports = {
+  speedReport, chooseModel, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };

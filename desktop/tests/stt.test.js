@@ -125,3 +125,48 @@ test("a better model beside a weak configured one is used instead", async () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a model too slow for this computer gives way to the biggest one that keeps up", async () => {
+  // "I want every answer in a second." A model that needs fifteen is not an
+  // assistant, and the fix cannot be a download: it has to be the models that
+  // are already on this machine.
+  const fs = require("fs");
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-speed-"));
+  const bin = path.join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli");
+  // Sizes stand in for the real files: what matters is the order.
+  const big = path.join(dir, "ggml-large-v3-turbo.bin");
+  const mid = path.join(dir, "ggml-small.bin");
+  const wee = path.join(dir, "ggml-base.bin");
+  try {
+    fs.writeFileSync(bin, "x");
+    fs.writeFileSync(big, Buffer.alloc(3000, "g"));
+    fs.writeFileSync(mid, Buffer.alloc(2000, "g"));
+    fs.writeFileSync(wee, Buffer.alloc(1000, "g"));
+
+    const slow = { runs: 3, avg: stt.TARGET_MS * 4 };
+    const quick = { runs: 3, avg: 900 };
+
+    // Nothing measured yet: the configured model stands.
+    assert.equal(stt.chooseModel(big, null).model, big);
+    // One slow run is not enough — the first includes loading the model.
+    assert.equal(stt.chooseModel(big, { runs: 1, avg: stt.TARGET_MS * 4 }).model, big);
+    // Measured slow, and the largest model that is smaller takes over.
+    const switched = stt.chooseModel(big, slow);
+    assert.equal(switched.model, mid, "the next size down, not the smallest");
+    assert.deepEqual(
+      { from: switched.fallback.from, to: switched.fallback.to },
+      { from: "ggml-large-v3-turbo.bin", to: "ggml-small.bin" },
+      "and it says what it swapped, so nothing changes silently",
+    );
+    // When that one is known to be slow too, it goes down one more.
+    assert.equal(stt.chooseModel(big, slow, (f) => (f === mid ? slow : null)).model, wee);
+    // Fast enough, and nothing changes.
+    assert.equal(stt.chooseModel(big, quick).model, big);
+    assert.equal(stt.chooseModel(big, quick).fallback, null);
+    // Nothing smaller to fall back to: it stays, rather than claiming a switch.
+    assert.equal(stt.chooseModel(wee, slow).model, wee);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

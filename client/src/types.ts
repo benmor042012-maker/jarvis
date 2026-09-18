@@ -384,6 +384,12 @@ export interface VoiceStatus {
     reason: string | null;
     install: SpeechEngineInstall | null;
     checked: { whisperBinaries: string[]; whisperModels: string[]; vosk: unknown };
+    /** How fast each model has been here, and any switch made to keep up. */
+    speed?: {
+      fallback: { from: string; to: string; ms: number } | null;
+      perModel: Record<string, number>;
+      targetMs: number;
+    };
   };
   microphone: { granted: boolean; required: boolean };
   wakePhrases: string[];

@@ -206,7 +206,18 @@ export function VoiceBar() {
       {/* Not hidden while the next utterance is in flight: on a machine this
           slow there is almost always one in flight, and the warning would
           flicker in and out of existence exactly when it is most needed. */}
-      {slow && (
+      {engine?.speed?.fallback && (
+        <div className="banner" role="note">
+          <strong>Switched to {engine.speed.fallback.to} to keep up.</strong>
+          <p>
+            {engine.speed.fallback.from} was taking about {String(Math.round(engine.speed.fallback.ms / 100) / 10)} seconds a sentence on this
+            computer, which is too long to talk to. {engine.speed.fallback.to} is already installed here and answers faster, with a little
+            less accuracy. Nothing was downloaded or deleted; to go back, delete the smaller file from the speech folder.
+          </p>
+        </div>
+      )}
+
+      {slow && !engine?.speed?.fallback && (
         <div className="banner banner-warn" role="note">
           <strong>This computer needs {String(Math.round(slow.ms / 1000))} seconds to understand one sentence.</strong>
           <p>
