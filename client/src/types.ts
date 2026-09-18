@@ -67,6 +67,8 @@ export interface Plan {
   device_id: string | null;
   device_name: string | null;
   job_id: string | null;
+  /** How long the planner took, in milliseconds. */
+  plan_ms?: number | null;
 }
 
 export type ResultStatus = "completed" | "failed" | "denied" | "cancelled" | "timeout";
@@ -93,6 +95,8 @@ export interface Job {
   current: { tool: string; description: string; risk: Risk } | null;
   started_at: number;
   finished_at: number | null;
+  /** How long the job has been running, or how long it took. */
+  ms?: number;
   error?: string;
 }
 
@@ -158,6 +162,10 @@ export interface Settings {
     whisperPath: string;
     whisperModel: string;
     voskModel: string;
+    /** fast: the quickest model installed, one pass. accurate: what is configured, full search. */
+    mode: "fast" | "accurate";
+    /** auto lets the engine use a GPU when the build and the machine have one. */
+    gpu: "auto" | "off";
     transcribeTimeoutMs: number;
     speakReplies: boolean;
   };
@@ -406,6 +414,8 @@ export interface VoiceStatus {
     checked: { whisperBinaries: string[]; whisperModels: string[]; vosk: unknown };
     /** How fast each model has been here, and any switch made to keep up. */
     speed?: {
+      mode?: "fast" | "accurate";
+      gpu?: "auto" | "off";
       fallback: { from: string; to: string; ms: number } | null;
       perModel: Record<string, number>;
       targetMs: number;
@@ -420,7 +430,7 @@ export interface VoiceStatus {
   paused: boolean;
   muted: boolean;
   listening_until: number | null;
-  last_heard: { text: string; at: number; engine: string; source: string } | null;
+  last_heard: { text: string; at: number; engine: string; source: string; took_ms?: number | null; model?: string | null } | null;
   last_error: { message: string; code: string | null; install: SpeechEngineInstall | null; at: number } | null;
   stats: { wakes: number; falseWakes: number; commands: number; stops: number; utterances: number };
 }

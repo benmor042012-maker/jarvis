@@ -183,3 +183,41 @@ test("a model too slow for this computer gives way to the biggest one that keeps
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the flags follow the mode, and the processor is used when asked", () => {
+  // What reaches whisper.cpp decides both the speed and the accuracy, so it is
+  // pinned rather than trusted. Checked directly rather than through a stand-in
+  // engine: a script with a shebang cannot be spawned on Windows at all, which
+  // is how this test first failed.
+  const args = (o) => stt.whisperArgs({ model: "/s/ggml-small.bin", file: "/t/a.wav", language: "he", seconds: 1.2, ...o });
+  const after = (list, flag) => list[list.indexOf(flag) + 1];
+
+  const fast = args({ mode: "fast" });
+  assert.equal(after(fast, "-l"), "he", "Hebrew is what was asked for");
+  assert.ok(!fast.includes("-tr"), "and it is never translated into English");
+  assert.ok(fast.includes("-ac"), "fast mode trims the encoder to the length of the recording");
+  assert.ok(Number(after(fast, "-ac")) < 1500, after(fast, "-ac"));
+  assert.ok(!fast.includes("-ng"), "the graphics card is left to the engine by default");
+  assert.equal(after(fast, "-bs"), "5", "a small model gets the search: it is cheap there and it needs it");
+
+  // The same mode on a large model drops the search instead: there it costs
+  // the seconds that made JARVIS unusable.
+  assert.equal(after(args({ mode: "fast", model: "/s/ggml-large-v3-turbo.bin" }), "-bs"), "1");
+
+  const accurate = args({ mode: "accurate", model: "/s/ggml-large-v3-turbo.bin" });
+  assert.ok(!accurate.includes("-ac"), "accurate mode keeps the whole window");
+  assert.equal(after(accurate, "-bs"), "5", "and searches rather than taking the first guess");
+
+  assert.ok(args({ mode: "fast", gpu: "off" }).includes("-ng"), "processor-only means processor-only");
+
+  // A long recording is not trimmed even in fast mode: -ac shorter than the
+  // audio would cut the end off.
+  assert.ok(!args({ mode: "fast", seconds: 45 }).includes("-ac"));
+
+  // The initial prompt is a plain sentence, and never the wake phrase: whisper
+  // repeats its prompt on unclear audio, which would turn a cough into a wake.
+  const prompt = after(fast, "--prompt");
+  assert.match(prompt, /[\u0590-\u05FF]/, "Hebrew audio gets a Hebrew prompt");
+  assert.ok(!prompt.includes("תתעורר"), prompt);
+  assert.ok(!args({ language: "xx" }).includes("--prompt"), "a language with no prompt written for it gets none");
+});

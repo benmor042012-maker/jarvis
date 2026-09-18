@@ -43,6 +43,15 @@ const DEFAULTS = {
     whisperPath: "",
     whisperModel: "",
     voskModel: "",
+    // fast: the smallest installed model that still does Hebrew, a single
+    // decoding pass, and only as much of the encoder as the recording needs.
+    // accurate: the largest installed model, beam search, the full window.
+    // Fast is the default because this is something you talk to.
+    mode: "fast",
+    // auto: let the engine use a GPU if the build has one and the machine has
+    // one. off: force the CPU. There is no "on": whisper.cpp decides, and a
+    // build without GPU support silently uses the CPU either way.
+    gpu: "auto",
     transcribeTimeoutMs: 120000,
     speakReplies: true,
   },
@@ -130,6 +139,8 @@ function sanitizePartial(partial) {
       // A one-letter wake phrase would fire on almost any speech.
       for (const w of p.voice.wakePhrases) if (w.length < 3) throw new Error(`Wake phrase "${w}" is too short to be safe`);
     }
+    if (p.voice.mode !== undefined && !["fast", "accurate"].includes(p.voice.mode)) throw new Error('voice.mode must be "fast" or "accurate"');
+    if (p.voice.gpu !== undefined && !["auto", "off"].includes(p.voice.gpu)) throw new Error('voice.gpu must be "auto" or "off"');
     if (p.voice.stopPhrases !== undefined) {
       if (!Array.isArray(p.voice.stopPhrases) || !p.voice.stopPhrases.length) throw new Error("At least one stop phrase is required");
       p.voice.stopPhrases = p.voice.stopPhrases.map((w) => String(w).trim()).filter(Boolean);
