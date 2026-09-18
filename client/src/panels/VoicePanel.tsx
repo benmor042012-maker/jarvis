@@ -38,6 +38,12 @@ export function VoicePanel() {
 
   const engine = voice?.engine;
 
+  const wakeModel = useJarvis((st) => st.wakeModel);
+  const wakeTeaching = useJarvis((st) => st.wakeTeaching);
+  const teachWakeWord = useJarvis((st) => st.teachWakeWord);
+  const forgetWakeWord = useJarvis((st) => st.forgetWakeWord);
+  const micBlocked = useJarvis((st) => st.micBlocked);
+
   return (
     <Dialog title="Voice" onClose={() => { setPanel(null); }} wide>
       <div className="grid-2">
@@ -61,6 +67,30 @@ export function VoicePanel() {
             <dt>Keep recordings</dt>
             <dd>{voice?.keepAudio ? "ON — recordings are kept on this computer" : "off — each temporary WAV is deleted right after it is transcribed"}</dd>
           </dl>
+          <h3>Instant wake word (no transcription)</h3>
+          <p className="muted small">
+            Taught here, the wake phrase is recognised in this window in about a millisecond, by comparing the sound to recordings of you
+            saying it. The speech engine is then only used for what you actually ask, which is where its accuracy matters and its seconds
+            are affordable. The recordings never leave this computer and are not audio: what is kept is a few hundred numbers describing
+            the shape of the sound.
+          </p>
+          {wakeTeaching ? (
+            <div className="banner">
+              <strong>Say the wake phrase now — recording {wakeTeaching.step} of {wakeTeaching.of}.</strong>
+              <p>Say it the way you normally would, then pause.</p>
+            </div>
+          ) : wakeModel ? (
+            <div className="row gap">
+              <span className="muted small">Taught {new Date(wakeModel.at).toLocaleDateString()} · {wakeModel.templates.length} recordings</span>
+              <button type="button" className="btn btn-ghost" onClick={() => { void teachWakeWord(); }}>Teach it again</button>
+              <button type="button" className="btn btn-ghost" onClick={() => { forgetWakeWord(); }}>Forget it</button>
+            </div>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={() => { void teachWakeWord(); }} disabled={!!micBlocked}>
+              Teach JARVIS your wake word
+            </button>
+          )}
+
           {engine && !engine.available && (
             <div className="banner banner-warn">
               <strong>{engine.reason}</strong>

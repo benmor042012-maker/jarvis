@@ -208,6 +208,24 @@ try {
   await until("a quick utterance after it", () => agent.voice.stats.utterances > 0, 30000);
   check("the warning survives the next quick utterance", await page.isVisible("text=seconds to understand one sentence"));
 
+  // 3c. The taught wake word: recognised in the page, in about a millisecond,
+  //     with the speech engine returning nothing at all. This is what makes a
+  //     wake answer in a second instead of in however long a transcription
+  //     takes, and it is the only path here that never touches the engine.
+  await page.getByRole("button", { name: "Voice", exact: true }).click();
+  await page.waitForSelector("text=Instant wake word", { timeout: 15000 });
+  say(""); // the engine is deliberately mute for the whole of this section
+  const wakesBeforeLocal = agent.voice.stats.wakes;
+  await page.getByRole("button", { name: "Teach JARVIS your wake word" }).click();
+  await until("the three teaching recordings", () => page.isVisible("text=recording 3 of 3"), 60000);
+  await until("the wake word to be learned", () => page.isVisible("text=Teach it again"), 60000);
+  check("a wake word can be taught from what the microphone hears", true);
+  await page.keyboard.press("Escape");
+  await until("a wake with no transcription behind it", () => agent.voice.stats.wakes > wakesBeforeLocal, 40000);
+  const local = agent.voice.history.filter((h) => h.kind === "wake" && h.detector === "local").at(-1);
+  check("the taught wake word wakes JARVIS without the speech engine", !!local, JSON.stringify(agent.voice.history.slice(-2)));
+  check("and claims no transcript it does not have", local?.text === "" && local?.phrase === null, JSON.stringify(local));
+
   // 4. The wake phrase starts listening, with no model involved.
   say("תתעורר");
   await until("the wake phrase", () => agent.voice.stats.wakes >= 1, 25000);

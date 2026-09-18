@@ -154,6 +154,47 @@ class VoiceSession extends EventEmitter {
   }
 
   /**
+   * The window's own wake-word detector heard the phrase.
+   *
+   * Nothing was transcribed: the page compared the shape of the sound against
+   * recordings of this person saying it, which costs about a millisecond. That
+   * is the whole point — a full transcription of one word takes seconds on an
+   * ordinary computer, and a wake phrase answered five seconds late is the same
+   * as one that was ignored.
+   *
+   * Every rule that guards a spoken wake guards this one: switched off, muted,
+   * paused, quiet hours, the cool-down and the minimum length all still apply.
+   * A detector in the page cannot talk its way past them.
+   */
+  wakeLocally({ device, source = "window", durationMs = 0, distance = null } = {}) {
+    const cfg = this.getConfig();
+    const v = cfg.voice || {};
+    const blocked = this._blocked();
+    if (blocked.blocked) return { action: "ignored", reason: blocked.reason, detail: blocked.detail };
+    if (durationMs && durationMs < MIN_WAKE_MS) {
+      this.stats.falseWakes++;
+      return { action: "ignored", reason: "false_wake_protection", detail: "The sound was too short to be speech." };
+    }
+    if (Date.now() - this.lastWakeAt < WAKE_COOLDOWN_MS) {
+      this.stats.falseWakes++;
+      return { action: "ignored", reason: "false_wake_protection", detail: "Woke a moment ago already." };
+    }
+    if (inQuietHours(v.quietHours)) {
+      audit.log({ event: "voice_wake_suppressed", detail: { reason: "quiet_hours", detector: "local" } });
+      return { action: "ignored", reason: "quiet_hours", detail: `Quiet hours are active (${v.quietHours.start}–${v.quietHours.end}).` };
+    }
+    this.lastWakeAt = Date.now();
+    this.stats.wakes++;
+    this.listeningUntil = Date.now() + (v.maxListenMs || 15000);
+    this._set("listening", "wake");
+    audit.log({ event: "voice_wake", device: device?.name, detail: { source, detector: "local", distance } });
+    // No transcript exists, and none is invented: the history says how it woke.
+    this._remember({ kind: "wake", text: "", phrase: null, detector: "local", distance });
+    this.emit("event", { type: "voice", event: "woke", phrase: null, until: this.listeningUntil });
+    return { action: "woke", phrase: null, listening_until: this.listeningUntil, detector: "local" };
+  }
+
+  /**
    * One captured utterance. The caller (the window or a paired phone) does the
    * voice-activity detection and sends only the speech it heard.
    *

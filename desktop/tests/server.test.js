@@ -442,3 +442,19 @@ test("every setting the interface can edit actually saves", async () => {
     }
   }
 });
+
+test("the local wake route answers with a usable voice status", async () => {
+  // The bug this pins: status() is async, and spreading the promise into the
+  // response body sent the page {} — a voice status with no engine in it, which
+  // the window then read a field off and threw.
+  await ownerClient.call("voice/microphone", { granted: true });
+  const r = await ownerClient.call("voice/wake", { ms: 900, distance: 2.1 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.action, "woke", JSON.stringify(r.body));
+  assert.ok(r.body.status && typeof r.body.status === "object", "the answer must carry the voice status");
+  assert.ok(r.body.status.engine, "and the status must have its engine, not a promise that serialised to nothing");
+  assert.equal(typeof r.body.status.state, "string");
+  // A paired phone cannot declare that the computer heard its wake word.
+  const remote = await remoteClient.call("voice/wake", { ms: 900, distance: 2.1 });
+  assert.equal(remote.status, 403);
+});
