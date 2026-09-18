@@ -313,6 +313,45 @@ function tempWavPath() {
 }
 
 /**
+ * Exactly what is handed to whisper.cpp, and why.
+ *
+ * Pulled out of transcribe() so the flags can be checked without a process:
+ * they decide both the speed and the accuracy, and the stand-in engine a test
+ * would otherwise need cannot be spawned on Windows at all.
+ */
+function whisperArgs({ model, file, language, mode = "fast", gpu = "auto", seconds = 0 }) {
+  // Accurate mode always searches; fast mode only does so on a small model,
+  // where the search is cheap and the model needs the help. On a large model in
+  // fast mode it multiplies the slowest part of the run, on exactly the
+  // computers that can least afford it.
+  const big = /large|medium/i.test(path.basename(model));
+  const beam = mode === "accurate" ? "5" : big ? "1" : "5";
+  const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", String(file).replace(/\.wav$/, ""), "-np", "-nt", "-bs", beam, "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+  // The engine uses a GPU when the build has support and the machine has one,
+  // and falls back to the CPU by itself when either is missing. -ng is the only
+  // lever there is: it forces the CPU.
+  if (gpu === "off") args.push("-ng");
+  // whisper always looks at a thirty-second window, so a one-second command
+  // costs the same as half a minute of speech unless it is told otherwise. -ac
+  // trims the encoder to the audio that exists — the single biggest saving on
+  // short commands, which is all JARVIS ever gets. Accurate mode keeps the
+  // whole window: trimming it is a speed trade, and that is the one trade
+  // accurate mode is not making.
+  if (mode === "fast" && seconds > 0 && seconds < 20) {
+    const ctx = Math.max(256, Math.min(1500, Math.ceil((((seconds + 1.5) / 30) * 1500) / 64) * 64));
+    args.push("-ac", String(ctx));
+  }
+  // A one-word clip gives the model almost nothing to go on, and it will guess
+  // at the language and the spelling. A plain sentence in the target language
+  // as the initial prompt settles both. The wake phrase itself is deliberately
+  // NOT in here: whisper repeats its prompt when the audio is unclear, which
+  // would turn every cough into a wake word.
+  const hint = PROMPTS[(language || "").slice(0, 2)];
+  if (hint) args.push("--prompt", hint);
+  return args;
+}
+
+/**
  * Transcribe a WAV buffer locally.
  *
  * The audio is written to a temp file only because the engines read files, and
@@ -344,33 +383,7 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       // On a large one it multiplies the slowest part of the run on exactly the
       // computers that can least afford it - and a wake phrase that arrives
       // forty seconds late is the same as one that never arrives.
-      // Accurate mode always searches; fast mode only does so on a small model,
-      // where the search is cheap and the model needs the help.
-      const big = /large|medium/i.test(path.basename(model));
-      const beam = mode === "accurate" ? "5" : big ? "1" : "5";
-      const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", beam, "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
-      // The engine uses a GPU when the build has support and the machine has
-      // one, and falls back to the CPU by itself when either is missing. -ng
-      // is the only lever there is: it forces the CPU.
-      if (cfg.voice?.gpu === "off") args.push("-ng");
-      // whisper always looks at a 30-second window, so a one-second command
-      // costs the same as half a minute of speech unless it is told otherwise.
-      // -ac trims the encoder to the audio that actually exists. This is the
-      // single biggest saving on short commands, which is all JARVIS ever gets.
-      const seconds = (wav.length - 44) / (16000 * 2);
-      // Accurate mode keeps the whole window: trimming it is a speed trade, and
-      // that is the one thing accurate mode is not making.
-      if (mode === "fast" && seconds > 0 && seconds < 20) {
-        const ctx = Math.max(256, Math.min(1500, Math.ceil(((seconds + 1.5) / 30) * 1500 / 64) * 64));
-        args.push("-ac", String(ctx));
-      }
-      // A one-word clip gives the model almost nothing to go on, and it will
-      // guess at the language and the spelling. A plain sentence in the target
-      // language as the initial prompt settles both. The wake phrase itself is
-      // deliberately NOT in here: whisper repeats its prompt when the audio is
-      // unclear, which would turn every cough into a wake word.
-      const hint = PROMPTS[(language || "").slice(0, 2)];
-      if (hint) args.push("--prompt", hint);
+      const args = whisperArgs({ model, file, language, mode, gpu: cfg.voice?.gpu, seconds: (wav.length - 44) / (16000 * 2) });
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
       if (res.timedOut) throw Object.assign(new Error("Local transcription timed out."), { status: 504 });
@@ -473,4 +486,4 @@ function cleanup(text) {
 }
 
 module.exports = {
-  speedReport, chooseModel, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
+  speedReport, whisperArgs, chooseModel, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
