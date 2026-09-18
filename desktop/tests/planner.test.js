@@ -84,3 +84,37 @@ test("the English equivalents keep working", () => {
   expect("schedule dentist at 2030-01-02", "create_calendar_draft", { title: "dentist" });
   expect("create file website.txt with hi", "write_file", { path: "website.txt", content: "hi" });
 });
+
+test("the computer's own controls answer in Hebrew with no model installed", () => {
+  // Sound, playback, the screen and notes are asked for in one short sentence.
+  // A rule planner handles all of them, so none of this waits for a local model
+  // to be downloaded — or for one to be right.
+  const cases = [
+    ["תעלה את הקול", "set_volume", { direction: "up" }],
+    ["תוריד את הקול 6", "set_volume", { direction: "down", steps: 6 }],
+    ["turn the volume down", "set_volume", { direction: "down" }],
+    ["השתק", "set_volume", { direction: "mute" }],
+    ["תנגן", "media_control", { action: "play_pause" }],
+    ["השיר הבא", "media_control", { action: "next" }],
+    ["previous track", "media_control", { action: "previous" }],
+    ["נעל את המסך", "lock_screen", {}],
+    ["מה מצב המחשב", "system_status", {}],
+    ["מה רשמתי", "notes_today", {}],
+  ];
+  for (const [command, tool, params] of cases) {
+    const p = rulePlan(command, { language: "he" });
+    assert.equal(p.actions[0]?.tool, tool, `"${command}" → ${JSON.stringify(p.actions)}`);
+    for (const [k, v] of Object.entries(params)) assert.equal(p.actions[0].params[k], v, `"${command}" ${k}`);
+  }
+
+  // A note keeps the words as they were said.
+  const note = rulePlan("תרשום שצריך להתקשר לדנה מחר", { language: "he" });
+  assert.equal(note.actions[0]?.tool, "note_add");
+  assert.equal(note.actions[0].params.text, "צריך להתקשר לדנה מחר");
+
+  // And none of this stole an existing command.
+  for (const [command, tool] of [["מה השעה", "current_time"], ["פתח פנקס רשימות", "open_app"]]) {
+    const p = rulePlan(command, { language: "he" });
+    assert.equal(p.actions[0]?.tool, tool, `"${command}" must still work`);
+  }
+});

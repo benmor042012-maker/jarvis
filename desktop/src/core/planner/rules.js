@@ -70,6 +70,23 @@ function rulePlan(input, ctx = {}) {
   if ((m = low.match(/^(?:scroll|גלול)\s*(up|down|למעלה|למטה)?(?:\s+(\d+))?$/))) return plan(he ? "גולל." : "Scrolling.", [{ tool: "mouse_scroll", params: { direction: /up|למעלה/.test(m[1] || "") ? "up" : "down", amount: Number(m[2] || 3) } }]);
   if ((m = low.match(/^(?:move (?:the )?mouse to|הזז את העכבר ל)\s*\(?\s*(-?\d+)\s*[, ]\s*(-?\d+)\s*\)?$/))) return plan(he ? "מזיז את העכבר." : "Moving the mouse.", [{ tool: "mouse_move", params: { x: Number(m[1]), y: Number(m[2]) } }]);
 
+  // The computer itself: sound, what is playing, the screen, and notes. All of
+  // this is asked for in one short sentence, which is exactly what a rule
+  // planner is for — no model needs to be installed for "תעלה את הקול".
+  if ((m = low.match(/^(?:volume|sound|קול|ווליום|עוצמה)\s*(up|down|louder|quieter|למעלה|למטה|חזק|חלש)(?:\s+(\d+))?$/)) || (m = low.match(/^(?:turn (?:the )?(?:volume|sound) |תעלה את ה?(?:קול|ווליום)|תוריד את ה?(?:קול|ווליום)|תגביר את ה?קול|תחליש את ה?קול)\s*(up|down|louder|quieter|למעלה|למטה)?(?:\s+(\d+))?$/))) {
+    const word = String(m[1] || "");
+    const down = /down|quieter|למטה|חלש/.test(word) || /תוריד|תחליש/.test(low);
+    return plan(he ? (down ? "מוריד את הקול." : "מעלה את הקול.") : down ? "Turning it down." : "Turning it up.", [{ tool: "set_volume", params: { direction: down ? "down" : "up", ...(m[2] ? { steps: Math.min(25, Number(m[2])) } : {}) } }]);
+  }
+  if (/^(?:mute|unmute|השתק|תשתיק|בטל השתקה|תבטל השתקה)$/i.test(text.trim())) return plan(he ? "משתיק." : "Muting.", [{ tool: "set_volume", params: { direction: "mute" } }]);
+  if (/^(?:play|pause|resume|נגן|תנגן|עצור ניגון|השהה|תשהה)$/i.test(text.trim())) return plan(he ? "נגן/השהה." : "Play or pause.", [{ tool: "media_control", params: { action: "play_pause" } }]);
+  if (/^(?:next(?: track| song)?|skip|הבא|השיר הבא|דלג)$/i.test(text.trim())) return plan(he ? "לשיר הבא." : "Next track.", [{ tool: "media_control", params: { action: "next" } }]);
+  if (/^(?:previous(?: track| song)?|back a (?:track|song)|הקודם|השיר הקודם|אחורה)$/i.test(text.trim())) return plan(he ? "לשיר הקודם." : "Previous track.", [{ tool: "media_control", params: { action: "previous" } }]);
+  if (/^(?:lock (?:the )?(?:screen|computer|pc)|נעל(?: את)? (?:המסך|המחשב)|תנעל(?: את)? (?:המסך|המחשב))$/i.test(text.trim())) return plan(he ? "נועל את המסך." : "Locking the screen.", [{ tool: "lock_screen", params: {} }]);
+  if (/^(?:battery|how(?:'s| is) the (?:computer|pc|battery)|system status|disk space|סוללה|מצב המחשב|מה מצב המחשב|כמה מקום נשאר)\??$/i.test(text.trim())) return plan(he ? "בודק את מצב המחשב." : "Checking the computer.", [{ tool: "system_status", params: {} }]);
+  if ((m = text.match(/^(?:note|jot down|write down|remember to write|רשום לי|תרשום|כתוב לי ביומן|רשום)\s+(?:that\s+|ש)?([\s\S]{2,})$/i))) return plan(he ? "רשמתי." : "Written down.", [{ tool: "note_add", params: { text: q(m[1]) } }]);
+  if (/^(?:my notes|today'?s notes|what did i write|מה רשמתי|הפתקים שלי|מה כתבתי היום)\??$/i.test(text.trim())) return plan(he ? "הפתקים של היום." : "Today's notes.", [{ tool: "notes_today", params: {} }]);
+
   // Clipboard
   if ((m = text.match(/^(?:copy|העתק)\s+(.+?)\s+(?:to (?:the )?clipboard|ללוח)$/i))) return plan(he ? "מעתיק ללוח." : "Copying to the clipboard.", [{ tool: "clipboard_write", params: { text: q(m[1]) } }]);
   if (/^(?:what(?:'s| is) (?:in|on) (?:the )?clipboard|read (?:the )?clipboard|מה בלוח|מה יש בלוח|קרא את הלוח)/i.test(text)) return plan(he ? "קריאת הלוח דורשת אישור." : "Reading the clipboard needs approval.", [{ tool: "clipboard_read", params: {} }]);
