@@ -44,10 +44,17 @@ function preferSupported(configured) {
   return [configured];
 }
 
-// Bigger multilingual models, best first. Hebrew is where the small ones fail:
-// "תתעורר" came back from ggml-small as "תפקות" on a real machine.
-const BETTER_MODELS = ["ggml-large-v3-turbo.bin", "ggml-large-v3.bin", "ggml-medium.bin"];
-const WEAK_MODELS = ["ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"];
+// Models that cannot do Hebrew well enough to be worth running, and the ones
+// to reach for instead when one is sitting beside them.
+//
+// ggml-small is deliberately NOT in the weak list any more. It was, and the
+// self-heal it triggered then took a machine that had been set to small and
+// quietly ran it on the large model instead — several seconds a sentence on an
+// ordinary PC, which is the difference between an assistant and a wait. What
+// small gets wrong is a letter here and there, and a near miss still wakes
+// JARVIS. A choice that was made on purpose is not a fault to correct.
+const BETTER_MODELS = ["ggml-small.bin", "ggml-large-v3-turbo.bin", "ggml-large-v3.bin", "ggml-medium.bin"];
+const WEAK_MODELS = ["ggml-base.bin", "ggml-tiny.bin"];
 
 function modelCandidates(cfg) {
   const configured = cfg.voice?.whisperModel?.trim();

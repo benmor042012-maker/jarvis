@@ -420,3 +420,32 @@ test("a model too poor for Hebrew is offered the better one, and the old file is
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("re-running the installer keeps the model JARVIS is already set to use", async () => {
+  // With both models installed, picking one by the order of a list would move
+  // someone who chose accuracy onto the fast one, or the reverse — silently,
+  // just for running the installer again.
+  const home = tmp();
+  const speech = path.join(home, "speech");
+  fs.mkdirSync(speech, { recursive: true });
+  const binName = workingEngine(speech);
+  const small = path.join(speech, "ggml-small.bin");
+  const turbo = path.join(speech, "ggml-large-v3-turbo.bin");
+  fs.writeFileSync(small, fakeModel());
+  fs.writeFileSync(turbo, fakeModel());
+  // JARVIS is set to the big one on purpose.
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ voice: { enabled: true, whisperPath: path.join(speech, binName), whisperModel: turbo } }));
+
+  const r = await runInstaller({ JARVIS_HOME: home, JARVIS_WHISPER_RELEASES_API: "http://127.0.0.1:9/none" });
+  const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+  assert.equal(cfg.voice.whisperModel, turbo, `the configured model must survive. Output:\n${r.out}`);
+  assert.match(r.out, /the one JARVIS is set to use/, r.out);
+  // Both are listed, with the one in use marked — switching between them is a
+  // choice to make here, not a 1.6 GB file to delete. (The prompt itself is not
+  // asserted: with stdin closed, readline never echoes it.)
+  assert.match(r.out, /Also installed here/, r.out);
+  assert.match(r.out, /turbo/, "the one in use");
+  assert.match(r.out, /small/, "and the one it is not using");
+  assert.equal(fs.existsSync(small), true, "nothing is deleted");
+  fs.rmSync(home, { recursive: true, force: true });
+});

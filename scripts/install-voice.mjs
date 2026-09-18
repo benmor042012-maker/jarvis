@@ -252,7 +252,15 @@ try {
   }
 
   // 2. The model.
-  const already = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).find((f) => fs.existsSync(f) && looksLikeModel(f));
+  //
+  // What is already configured wins over what is merely present: with several
+  // models installed, re-running this must not quietly move someone who chose
+  // accuracy onto the fast one, any more than the other way round.
+  const configured = (() => {
+    const p = config.load()?.voice?.whisperModel;
+    return p && fs.existsSync(p) && looksLikeModel(p) ? p : null;
+  })();
+  const already = configured ?? MODELS.map((m) => path.join(SPEECH_DIR, m.file)).find((f) => fs.existsSync(f) && looksLikeModel(f));
   let modelFile = already ?? null;
   if (modelFile && WEAK_HEBREW.has(path.basename(modelFile))) {
     // Saying "already here" and stopping is how someone ends up with a model
@@ -279,7 +287,25 @@ try {
       ok(`Keeping ${path.basename(modelFile)}.`);
     }
   } else if (modelFile) {
-    ok(`A speech model is already here: ${path.basename(modelFile)}`);
+    ok(`A speech model is already here: ${path.basename(modelFile)}${configured ? " (the one JARVIS is set to use)" : ""}`);
+    const others = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).filter((f) => f !== modelFile && fs.existsSync(f) && looksLikeModel(f));
+    if (others.length) {
+      // Several are installed, so this is a choice, not a fact: switching
+      // between them should not mean deleting a 1.6 GB download.
+      console.log(`\n  Also installed here:`);
+      for (const f of [modelFile, ...others]) {
+        const m = MODELS.find((x) => x.file === path.basename(f));
+        const mark = f === modelFile ? `${C.g}→${C.r}` : " ";
+        console.log(`  ${mark} ${C.b}${(m?.id ?? path.basename(f)).padEnd(7)}${C.r} ${C.dim}${m?.why ?? ""}${C.r}`);
+      }
+      const want = (await ask(rl, `\n  Which should JARVIS use? [${MODELS.find((x) => x.file === path.basename(modelFile))?.id ?? "keep"}] `)).trim().toLowerCase();
+      const picked = MODELS.find((m) => m.id === want);
+      const pickedFile = picked ? path.join(SPEECH_DIR, picked.file) : null;
+      if (pickedFile && fs.existsSync(pickedFile) && looksLikeModel(pickedFile)) {
+        modelFile = pickedFile;
+        ok(`JARVIS will use ${path.basename(modelFile)}.`);
+      }
+    }
   } else {
     const fits = MODELS.filter((m) => m.needsGb <= ramGb);
     const suggested = fits[0] ?? MODELS[MODELS.length - 1];
@@ -333,6 +359,7 @@ try {
 } catch (e) {
   bad(e.message);
   console.log(`\n  ${C.dim}Nothing was left half-installed: the engine and the model are each kept only once they arrive complete.${C.r}`);
+  if (WIN) console.log(`  ${C.dim}Hebrew looks scrambled in this console window — that is the window, not JARVIS. It is correct inside the app.${C.r}`);
   manualSteps();
   exitCode = 1;
 } finally {

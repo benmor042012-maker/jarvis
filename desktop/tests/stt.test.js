@@ -101,26 +101,39 @@ test("a configured main.exe is replaced by the whisper-cli.exe beside it", async
   }
 });
 
-test("a better model beside a weak configured one is used instead", async () => {
-  // The same self-healing as the retired program: someone who downloads the
-  // turbo model by hand should get Hebrew that works, without editing config.
+test("a model that cannot do Hebrew gives way; a model chosen on purpose does not", async () => {
   const fs = require("fs");
   const os = require("os");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-model-"));
   const bin = path.join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli");
-  const weak = path.join(dir, "ggml-small.bin");
+  const tooPoor = path.join(dir, "ggml-base.bin");
+  const small = path.join(dir, "ggml-small.bin");
+  const turbo = path.join(dir, "ggml-large-v3-turbo.bin");
   try {
     fs.writeFileSync(bin, "x");
-    fs.writeFileSync(weak, "ggml");
-    const cfg = { voice: { whisperPath: bin, whisperModel: weak } };
-    let d = await stt.detect(cfg, { force: true });
-    assert.equal(d.model, weak, "on its own, the configured model is what there is");
+    fs.writeFileSync(tooPoor, "ggml");
 
-    const turbo = path.join(dir, "ggml-large-v3-turbo.bin");
+    // On its own, what is configured is what there is.
+    let d = await stt.detect({ voice: { whisperPath: bin, whisperModel: tooPoor } }, { force: true });
+    assert.equal(d.model, tooPoor);
+
+    // With something usable beside it, base gives way without anyone editing
+    // config.json.
+    fs.writeFileSync(small, "ggml");
+    d = await stt.detect({ voice: { whisperPath: bin, whisperModel: tooPoor } }, { force: true });
+    assert.equal(d.model, small);
+
+    // But small configured with turbo beside it stays small. This used to swap
+    // itself for the large model and spend several seconds a sentence doing it
+    // — undoing, silently, the one choice that makes JARVIS quick to talk to.
     fs.writeFileSync(turbo, "ggml");
-    d = await stt.detect(cfg, { force: true });
-    assert.equal(d.model, turbo);
+    d = await stt.detect({ voice: { whisperPath: bin, whisperModel: small } }, { force: true });
+    assert.equal(d.model, small, "a model chosen on purpose is not a fault to correct");
     assert.equal(d.hebrew, true);
+
+    // And turbo configured stays turbo: accuracy over speed is just as valid.
+    d = await stt.detect({ voice: { whisperPath: bin, whisperModel: turbo } }, { force: true });
+    assert.equal(d.model, turbo);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
