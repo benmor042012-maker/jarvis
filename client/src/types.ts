@@ -416,6 +416,8 @@ export interface UtteranceResult {
   phrase?: string;
   listening_until?: number;
   model_used?: boolean;
+  /** How long the speech engine took on this utterance, in milliseconds. */
+  took_ms?: number | null;
   plan?: Plan;
   job?: Job | null;
 }

@@ -51,6 +51,7 @@ class VoiceSession extends EventEmitter {
     this.lastWakeAt = 0;
     this.listeningUntil = 0;
     this.lastHeard = null;
+    this.lastTookMs = null;
     this.lastError = null;
     this.stats = { wakes: 0, falseWakes: 0, commands: 0, stops: 0, utterances: 0 };
     this.history = [];
@@ -185,7 +186,12 @@ class VoiceSession extends EventEmitter {
     }
 
     const text = heard.text;
-    this.lastHeard = { text, at: Date.now(), engine: heard.engine, source };
+    this.lastHeard = { text, at: Date.now(), engine: heard.engine, source, took_ms: heard.tookMs ?? null, model: heard.model ?? null };
+    // How long the engine took is part of the answer to "why is it not doing
+    // anything": a large model on a modest computer can spend half a minute on
+    // one sentence, which from the outside is indistinguishable from ignoring
+    // the person entirely.
+    this.lastTookMs = heard.tookMs ?? null;
     const quiet = inQuietHours(v.quietHours);
 
     // 1. Stop phrases, first and without any model.
@@ -221,7 +227,7 @@ class VoiceSession extends EventEmitter {
       if (!phrase) {
         this._set("standby", "not_for_jarvis");
         this._remember({ kind: "ignored", text });
-        return { action: "ignored", reason: "no_wake_phrase", text };
+        return { action: "ignored", reason: "no_wake_phrase", text, took_ms: this.lastTookMs };
       }
       // False-wake protection: a real wake utterance is short, long enough to
       // be speech, and not a repeat inside the cool-down window.
@@ -251,7 +257,7 @@ class VoiceSession extends EventEmitter {
       // "תתעורר פתח פנקס רשימות" — the command rode along with the wake phrase.
       const rest = stripPhrase(text, phrase, { near: close.distance });
       if (rest && words(rest).length >= 1) return this._runCommand(rest, { device, source, viaWake: true });
-      return { action: "woke", phrase, listening_until: this.listeningUntil, text };
+      return { action: "woke", phrase, listening_until: this.listeningUntil, text, took_ms: this.lastTookMs };
     }
 
     // 3. Listening: this utterance is the command.

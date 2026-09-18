@@ -17,6 +17,16 @@ const of = args[args.indexOf("-of") + 1];
 const home = process.env.JARVIS_HOME || ".";
 const script = join(home, "stub-say.txt");
 
+// A real engine takes time, and the window has to show that it is working
+// rather than nothing at all. The test sets this to make one run slow.
+const delayMs = Number(process.env.JARVIS_STUB_DELAY_MS || 0);
+if (delayMs > 0) {
+  const until = Date.now() + delayMs;
+  // A plain busy wait: this stands in for a program that is computing, and
+  // sleeping through an async timer would let the process exit first.
+  while (Date.now() < until) { /* spin */ }
+}
+
 let text = "";
 try {
   text = readFileSync(script, "utf8").trim();

@@ -1381,6 +1381,10 @@ textarea {
   color: var(--white);
   quotes: "\201C" "\201D";
 }
+.voice-working {
+  color: var(--accent, var(--white)) !important;
+  font-size: 12px !important;
+}
 .voice-fix {
   color: var(--accent, var(--white));
 }
