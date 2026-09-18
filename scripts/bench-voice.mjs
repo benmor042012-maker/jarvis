@@ -25,7 +25,9 @@ const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", g: "\x1b[32m", y: "\x1b[
 const require = createRequire(pathToFileURL(join(ROOT, "desktop", "package.json")));
 
 const ms = (n) => `${String(Math.round(n))} ms`;
-const rounds = Number(process.env.JARVIS_BENCH_ROUNDS || 5);
+// Three is enough for a median and keeps the whole run to a couple of minutes
+// even when a heavy model is installed. JARVIS_BENCH_ROUNDS raises it.
+const rounds = Number(process.env.JARVIS_BENCH_ROUNDS || 3);
 
 /** One second of speech-shaped sound: a wobbling tone, not silence. */
 function speech(seconds = 1.2, rate = 16000) {
@@ -111,6 +113,7 @@ if (!engine || !existsSync(engine) || !models.length) {
 } else {
   const sample = wav(speech(1.2));
   console.log(`${C.c}speech engine${C.r} ${C.dim}${basename(engine)} · one 1.2-second utterance${C.r}`);
+  console.log(`${C.dim}              ${String(models.length * 2)} runs of ${String(rounds)}; a large model can take a minute each. Each line appears as it finishes.${C.r}`);
   for (const model of models) {
     for (const mode of ["fast", "accurate"]) {
       const runs = [];

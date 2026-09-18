@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("jarvisDesktop", {
   getOwnerDevice: () => ipcRenderer.invoke("owner-device"),
   getAgentInfo: () => ipcRenderer.invoke("agent-info"),
   openPath: (p) => ipcRenderer.invoke("open-path", p),
+  /** Ask the desktop to bring the window up — used when the wake word is heard in the tray. */
+  showWindow: () => ipcRenderer.invoke("show-window"),
   onAlertSound: (cb) => {
     const handler = () => { cb(); };
     ipcRenderer.on("jarvis:alert-sound", handler);

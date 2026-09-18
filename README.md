@@ -250,6 +250,15 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - **Where the time went is shown, not guessed at.** Each command logs `heard 0.9s · thought 0.2s ·
   did 1.1s`, and long jobs say "Starting" the moment they begin rather than going quiet.
   `npm run bench:voice` measures the same three stages on your machine, before and after a change.
+- **Closed to the tray, JARVIS still hears you, and the wake word brings it back up.** The microphone
+  and the detector live in the window, so the window keeps running while hidden
+  (`backgroundThrottling: false`) and asks the desktop to raise itself when it wakes. Quitting from
+  the tray menu is what actually stops it; turn on **Start with Windows** in Settings if you want it
+  back after a restart.
+- **The computer itself, in one sentence and with no model installed:** volume up and down, mute,
+  play/pause and skip, lock the screen, how the battery and disk are doing, and "write that down"
+  into a plain daily notes file. All of it is Windows key events and PowerShell — nothing to install,
+  no account, nothing to pay for. On macOS and Linux the Windows-only ones say so with the reason.
 - **A taught wake word answers immediately; the speech engine is for what you say next.** Running
   every sound through whisper.cpp to find out whether it was the wake phrase costs seconds on an
   ordinary computer, and a wake answered five seconds late reads as one that was ignored. Voice →
