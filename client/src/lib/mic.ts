@@ -50,7 +50,7 @@ export interface MicOptions {
   silenceMs: number;
   /** Shortest utterance worth transcribing. */
   minSpeechMs: number;
-  onSegment: (wav: Blob, durationMs: number) => void;
+  onSegment: (wav: Blob, durationMs: number, samples: Float32Array) => void;
   onLevel?: (level: number) => void;
   onError?: (message: string) => void;
   /**
@@ -225,7 +225,7 @@ export class MicCapture {
     const durationMs = (samples.length / TARGET_RATE) * 1000;
     if (durationMs < this.opts.minSpeechMs) return;
     try {
-      this.opts.onSegment(encodeWav(samples), durationMs);
+      this.opts.onSegment(encodeWav(samples), durationMs, samples);
     } catch (err) {
       this.opts.onError?.(err instanceof Error ? err.message : "The recording could not be prepared.");
     }

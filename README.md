@@ -42,6 +42,11 @@ npm run voice
 הוא מוריד את מנוע הדיבור ומודל שמבין עברית, ואז שואל את ג'רביס עצמו אם הוא באמת שומע —
 ואומר "מוכן" רק אחרי שבדק.
 
+**כדי שהוא יתעורר תוך שנייה:** בחלון ג'רביס → **Voice** → *Teach JARVIS your wake word*, ותגידו
+את מילת ההערה שלוש פעמים. מאז הוא מזהה אותה בחלון עצמו תוך אלפית שנייה, בלי תמלול בכלל —
+מנוע הדיבור עובד רק על הפקודה עצמה. ההקלטות לא יוצאות מהמחשב ולא נשמרות כקול: נשמרים כמה מאות
+מספרים שמתארים את צורת הצליל.
+
 **לעברית — קחו את המודל `turbo` (1.6 ג'יגה, חינם).** המודלים הקטנים "מבינים עברית" על הנייר
 ובפועל מפספסים מילים: על מחשב אמיתי "תתעורר" חזר מ-`small` בתור "תפקות". אם כבר מותקן מודל קטן,
 ההתקנה מציעה להחליף אותו, והקובץ הישן נשאר במקומו עד שתמחקו אותו.
@@ -232,6 +237,13 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- **A taught wake word answers immediately; the speech engine is for what you say next.** Running
+  every sound through whisper.cpp to find out whether it was the wake phrase costs seconds on an
+  ordinary computer, and a wake answered five seconds late reads as one that was ignored. Voice →
+  *Teach JARVIS your wake word* records the phrase three times and from then on matches the shape of
+  the sound in the page itself (MFCC features, dynamic time warping) in about a millisecond — no
+  model, no download, no network. The tolerance comes from how much your own three recordings differ.
+  Without it, everything still works; waking just waits for the engine.
 - **Voice needs a speech engine installed on the computer.** `npm run voice` (or a double-click on
   `INSTALL-VOICE.bat`) fetches it and a multilingual model for you, then asks JARVIS whether it can
   actually hear you before saying it is ready. For Hebrew, take the `turbo` model it recommends: the

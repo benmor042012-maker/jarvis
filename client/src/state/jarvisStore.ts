@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { agentApi, api } from "../api";
 import { MicCapture, micSupport } from "../lib/mic";
+import { enroll, loadWakeModel, saveWakeModel, WakeDetector, type WakeModel } from "../lib/wake";
 import { AgentError, describeError, loadCreds, loadRelay, saveCreds, saveRelay, type RelayConfig } from "../lib/protocol";
 import { alertSound, sleepSound, stopSound, unlockAudio, wakeSound } from "../lib/sound";
 import { speak, stopSpeaking, warmVoices } from "../lib/speech";
@@ -105,6 +106,14 @@ interface JarvisState {
   slow: { ms: number; model: string | null } | null;
   /** Utterances dropped because the one before was still being transcribed. */
   skipped: number;
+  /**
+   * The wake word this computer was taught, if it was. With one, waking takes a
+   * millisecond in the page instead of a full transcription; without one,
+   * everything still works exactly as before, just at the engine's speed.
+   */
+  wakeModel: WakeModel | null;
+  /** How the enrolment is going: which recording, out of how many. */
+  wakeTeaching: { step: number; of: number } | null;
   /** The microphone stayed open and delivered nothing but silence. */
   micSilent: { device: string } | null;
   /** The inputs this browser can offer, and the one JARVIS is told to use. */
@@ -151,6 +160,8 @@ interface JarvisState {
   setVoicePaused: (paused: boolean) => Promise<void>;
   setVoiceMuted: (muted: boolean) => Promise<void>;
   setKeyboard: (on: boolean) => void;
+  teachWakeWord: () => Promise<void>;
+  forgetWakeWord: () => void;
   refreshMicDevices: () => Promise<void>;
   setMicDevice: (id: string | null) => Promise<void>;
   say: (text: string) => Promise<void>;
@@ -210,6 +221,8 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   transcribing: null,
   slow: null,
   skipped: 0,
+  wakeModel: loadWakeModel(),
+  wakeTeaching: null,
   micSilent: null,
   micDevices: [],
   micDeviceId: loadMicDevice(),
@@ -538,6 +551,44 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     set({ keyboard: on });
   },
 
+  teachWakeWord: async () => {
+    // Three recordings: enough for the detector to know how much this person's
+    // own voice varies, which is what sets its tolerance. Fewer, and the
+    // tolerance would be a guess.
+    const of = 3;
+    const takes: Float32Array[] = [];
+    const wasListening = get().listening;
+    try {
+      for (let step = 1; step <= of; step++) {
+        set({ wakeTeaching: { step, of } });
+        const sample = await nextUtterance(12000);
+        takes.push(sample);
+      }
+      const model = enroll(takes);
+      if (!model) {
+        set({ wakeTeaching: null });
+        get().addLog("warn", "That was not enough to go on — say the wake phrase clearly, one word at a time, and try again.");
+        return;
+      }
+      saveWakeModel(model);
+      detector = new WakeDetector(model);
+      set({ wakeModel: model, wakeTeaching: null });
+      get().addLog("system", "Wake word taught. JARVIS now wakes in the window itself, without transcribing anything.");
+    } catch (err) {
+      set({ wakeTeaching: null });
+      get().addLog("error", err instanceof Error ? err.message : "The wake word could not be recorded.");
+    } finally {
+      if (!wasListening) capture().stop();
+    }
+  },
+
+  forgetWakeWord: () => {
+    saveWakeModel(null);
+    detector = null;
+    set({ wakeModel: null });
+    get().addLog("system", "Wake word forgotten. JARVIS is back to listening for it through the speech engine.");
+  },
+
   refreshMicDevices: async () => {
     // Labels are only revealed once the microphone has been granted, so this is
     // called after permission rather than on load.
@@ -629,6 +680,33 @@ function saveMicDevice(id: string | null): void {
 const SLOW_MS = 8000;
 let quickRuns = 0;
 let mic: MicCapture | null = null;
+let detector: WakeDetector | null = null;
+// While the wake word is being taught, the next utterance goes here instead of
+// to the agent.
+let enrolling: ((samples: Float32Array) => void) | null = null;
+
+function wakeDetector(): WakeDetector | null {
+  if (detector) return detector;
+  const model = useJarvis.getState().wakeModel;
+  if (model) detector = new WakeDetector(model);
+  return detector;
+}
+
+/** The next thing the microphone hears, for teaching the wake word. */
+async function nextUtterance(timeoutMs: number): Promise<Float32Array> {
+  await useJarvis.getState().startListening();
+  return await new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      enrolling = null;
+      reject(new Error("Nothing was heard. Check the microphone and try again."));
+    }, timeoutMs);
+    enrolling = (samples) => {
+      window.clearTimeout(timer);
+      enrolling = null;
+      resolve(samples);
+    };
+  });
+}
 let uploading = false;
 let queued: { wav: Blob; ms: number } | null = null;
 let levelAt = 0;
@@ -638,7 +716,24 @@ function capture(): MicCapture {
     maxSegmentMs: 15000,
     silenceMs: 900,
     minSpeechMs: 260,
-    onSegment: (wav, ms) => {
+    onSegment: (wav, ms, samples) => {
+      if (enrolling) {
+        enrolling(samples);
+        return;
+      }
+      // The wake word, if this computer was taught one, is decided here — in
+      // about a millisecond, against recordings of this person saying it. The
+      // speech engine never sees it, which is the whole difference between
+      // waking now and waking in ten seconds.
+      const s = useJarvis.getState();
+      const d = wakeDetector();
+      if (d && !s.voice?.listening_until && s.voice?.state === "standby") {
+        const hit = d.test(samples);
+        if (hit.hit) {
+          void localWake(ms, hit.distance);
+          return; // nothing to transcribe: the phrase itself is not a command
+        }
+      }
       // One upload at a time; a newer utterance replaces a waiting one so a
       // stop phrase is never stuck behind an old recording. Losing the older
       // one is the right trade and a bad surprise, so it is counted and shown:
@@ -668,6 +763,30 @@ function capture(): MicCapture {
 
 export function micCapture(): MicCapture {
   return capture();
+}
+
+/**
+ * Tell the agent the page heard the wake word. The sound is immediate and local
+ * — the point of the whole thing is that nothing waits — but the agent still
+ * decides: quiet hours, muted, paused and the cool-down are all its call, and
+ * the window only shows LISTENING once it says so.
+ */
+async function localWake(ms: number, distance: number): Promise<void> {
+  const s = useJarvis.getState();
+  try {
+    const res = await api.voiceWake(ms, distance);
+    if (res.action === "woke") {
+      wakeSound();
+      useJarvis.setState({ voice: res.status, heard: null });
+      s.setOrb("listening");
+      return;
+    }
+    // Refused, and the reason is the agent's to give.
+    useJarvis.setState({ voice: res.status });
+    if (res.detail && !s.log.some((l) => l.text === res.detail)) s.addLog("system", res.detail);
+  } catch (err) {
+    s.addLog("error", describeError(err));
+  }
 }
 
 async function drainUploads(): Promise<void> {

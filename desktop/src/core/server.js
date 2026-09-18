@@ -162,6 +162,15 @@ class Server {
     // --- voice -----------------------------------------------------------
     r("voice/status", async ({ params }) => A.voice.status({ force: !!params.force }));
     r("voice/microphone", async ({ params, device }) => { A.voice.setMicGranted(!!params.granted); audit.log({ event: "microphone_permission", device: device?.name, detail: { granted: !!params.granted } }); return A.voice.status(); }, { owner: true });
+    // The window's own wake-word detector heard the phrase. Owner only: the
+    // computer JARVIS runs on decides when it starts listening, and a paired
+    // phone saying "he woke" is not evidence of anything.
+    r("voice/wake", async ({ params, device }) => {
+      const out = A.voice.wakeLocally({ device, source: "window", durationMs: Number(params.ms) || 0, distance: Number.isFinite(params.distance) ? Number(params.distance) : null });
+      // Awaited: status() is async, and a promise spread into the body reaches
+      // the page as {} — which is a voice status with no engine in it.
+      return { ...out, status: await A.voice.status() };
+    }, { owner: true });
     r("voice/pause", async ({ params }) => { A.voice.setPaused(!!params.paused); return A.voice.status(); });
     r("voice/mute", async ({ params }) => { A.voice.setMuted(!!params.muted); return A.voice.status(); });
     r("voice/done-speaking", async () => { A.voice.doneSpeaking(); return A.voice.status(); });
