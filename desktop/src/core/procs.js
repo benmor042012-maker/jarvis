@@ -86,4 +86,26 @@ function launch(file, args = []) {
   return child.pid;
 }
 
-module.exports = { run, launch, track, killTree, killAll, IS_WIN, count: () => children.size };
+/**
+ * A helper process JARVIS keeps around — today, the speech server that holds
+ * the model in memory between sentences.
+ *
+ * Tracked like every other child, so quitting JARVIS takes it with it, and
+ * attached rather than detached for the same reason: nothing of ours should
+ * outlive the agent. Its output is dropped: it is a progress log, and the
+ * useful part (whether it answers) is a question for the port, not the pipe.
+ */
+function spawnLong(file, args = [], { cwd, env } = {}) {
+  const child = spawn(file, args, {
+    cwd,
+    env: { ...process.env, ...(env || {}) },
+    stdio: "ignore",
+    windowsHide: true,
+    detached: false,
+  });
+  child.on("error", () => {});
+  track(child);
+  return child;
+}
+
+module.exports = { run, launch, spawnLong, track, killTree, killAll, IS_WIN, count: () => children.size };

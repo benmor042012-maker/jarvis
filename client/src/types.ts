@@ -166,6 +166,8 @@ export interface Settings {
     mode: "fast" | "accurate";
     /** auto lets the engine use a GPU when the build and the machine have one. */
     gpu: "auto" | "off";
+    /** Keep the model in memory between sentences, when the download came with a server. */
+    keepModelLoaded: boolean;
     transcribeTimeoutMs: number;
     speakReplies: boolean;
   };
@@ -394,6 +396,8 @@ export interface VoiceStatus {
     checked: { whisperBinaries: string[]; whisperModels: string[]; vosk: unknown };
     /** How fast each model has been here, and any switch made to keep up. */
     speed?: {
+      /** Whether a speech server is holding the model in memory. */
+      server?: { running: boolean; model: string | null; port: number | null };
       mode?: "fast" | "accurate";
       gpu?: "auto" | "off";
       fallback: { from: string; to: string; ms: number } | null;

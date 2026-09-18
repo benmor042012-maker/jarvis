@@ -54,6 +54,14 @@ export function VoicePanel() {
             <dd>{engine?.available ? engine.name ?? "?" : "none installed"}</dd>
             <dt>Model</dt>
             <dd>{engine?.model ?? "—"}</dd>
+            <dt>Model in memory</dt>
+            <dd>
+              {engine?.speed?.server?.running
+                ? `yes — ${engine.speed.server.model ?? "loaded"}, so each sentence skips loading it again`
+                : "no — the model is read from disk for every sentence, which is most of the wait"}
+            </dd>
+            <dt>Speed</dt>
+            <dd>{engine?.speed?.mode === "accurate" ? "Accurate — full search, the model you chose" : "Fast — one pass, the quickest model installed"}</dd>
             <dt>Hebrew</dt>
             <dd>{engine?.hebrew ? "supported by this model" : "not available with what is installed"}</dd>
             <dt>State</dt>

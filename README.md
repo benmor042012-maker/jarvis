@@ -217,6 +217,13 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- **The model stays in memory between sentences.** The command-line engine reloads it from disk every
+  time — with a 466 MB model that is most of the wait, and it is why a one-second sentence could take
+  nine. whisper.cpp ships `whisper-server` in the same download, so JARVIS keeps one running on
+  127.0.0.1 (a port the system hands out, never exposed, stopped when idle or when JARVIS quits) and
+  posts the audio to it. No server binary, or it will not start? It falls straight back to the
+  command-line program, which always works. Settings → Voice → *Model in memory* says which is
+  happening; `keepModelLoaded: false` turns it off.
 - **Fast mode and Accurate mode.** Fast (the default) runs the smallest installed model that still
   does Hebrew, one decoding pass, and only as much of the encoder as the recording needs — it is
   meant to answer while you are still listening for it. Accurate runs the model you configured, full
