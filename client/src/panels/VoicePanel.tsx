@@ -16,6 +16,7 @@ const KIND: Record<VoiceHistoryEntry["kind"], string> = {
   false_wake: "false wake, ignored",
   quiet_hours: "quiet hours, ignored",
   empty: "nothing heard",
+  follow_up: "kept listening for a follow-up",
 };
 
 export function VoicePanel() {
@@ -54,6 +55,14 @@ export function VoicePanel() {
             <dd>{engine?.available ? engine.name ?? "?" : "none installed"}</dd>
             <dt>Model</dt>
             <dd>{engine?.model ?? "—"}</dd>
+            <dt>Model in memory</dt>
+            <dd>
+              {engine?.speed?.server?.running
+                ? `yes — ${engine.speed.server.model ?? "loaded"}, so each sentence skips loading it again`
+                : "no — the model is read from disk for every sentence, which is most of the wait"}
+            </dd>
+            <dt>Speed</dt>
+            <dd>{engine?.speed?.mode === "accurate" ? "Accurate — full search, the model you chose" : "Fast — one pass, the quickest model installed"}</dd>
             <dt>Hebrew</dt>
             <dd>{engine?.hebrew ? "supported by this model" : "not available with what is installed"}</dd>
             <dt>State</dt>
@@ -62,6 +71,12 @@ export function VoicePanel() {
             <dd>{voice?.wakePhrases.join(", ") || "—"}</dd>
             <dt>Stop phrases</dt>
             <dd>{voice?.stopPhrases.join(", ") || "—"}</dd>
+            <dt>Conversation</dt>
+            <dd>
+              {voice?.conversation
+                ? `on — after an answer JARVIS keeps listening for ${String(Math.round((voice.followUpMs ?? 8000) / 1000))} s, so the next sentence needs no wake word`
+                : "off — the wake word is needed for every command"}
+            </dd>
             <dt>Quiet hours</dt>
             <dd>{voice?.quietHours.enabled ? `${voice.quietHours.start ?? ""}–${voice.quietHours.end ?? ""}${voice.quietHours.active ? " (active now)" : ""}` : "off"}</dd>
             <dt>Keep recordings</dt>

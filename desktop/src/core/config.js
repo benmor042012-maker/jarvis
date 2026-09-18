@@ -24,7 +24,10 @@ const DEFAULTS = {
   extraApps: [], // [{ id, path }] user-added executables
   allowedUrlHosts: ["*"],
   toolPolicies: {}, // advanced mode: tool -> policy value
-  tts: { enabled: true, lang: "he-IL" },
+  // Speaking out loud uses a voice already installed on this computer. An
+  // empty name means "the first local voice for the language"; a name pins one
+  // of the installed voices, so JARVIS keeps the voice you chose.
+  tts: { enabled: true, lang: "he-IL", voice: "" },
   voice: {
     // Voice-first operation. The microphone is only opened after you accept the
     // permission screen, audio is transcribed by a local engine, and nothing is
@@ -48,12 +51,24 @@ const DEFAULTS = {
     // accurate: the largest installed model, beam search, the full window.
     // Fast is the default because this is something you talk to.
     mode: "fast",
+    // The command-line engine reloads the model from disk for every sentence.
+    // When whisper-server came with the download, JARVIS keeps one running on
+    // 127.0.0.1 instead, so the model is loaded once. Off falls back to the
+    // program, which is slower and always works.
+    keepModelLoaded: true,
     // auto: let the engine use a GPU if the build has one and the machine has
     // one. off: force the CPU. There is no "on": whisper.cpp decides, and a
     // build without GPU support silently uses the CPU either way.
     gpu: "auto",
     transcribeTimeoutMs: 120000,
     speakReplies: true,
+    // After JARVIS answers, it keeps listening for a short while, so the next
+    // sentence does not need the wake word again — a conversation rather than
+    // a series of commands. Everything that governs listening still governs
+    // this: a stop phrase, the emergency stop, mute, pause and quiet hours all
+    // end it immediately, and it closes by itself after followUpMs.
+    conversation: true,
+    followUpMs: 8000,
   },
   alerts: {
     enabled: true,
@@ -140,11 +155,20 @@ function sanitizePartial(partial) {
       for (const w of p.voice.wakePhrases) if (w.length < 3) throw new Error(`Wake phrase "${w}" is too short to be safe`);
     }
     if (p.voice.mode !== undefined && !["fast", "accurate"].includes(p.voice.mode)) throw new Error('voice.mode must be "fast" or "accurate"');
+    if (p.voice.keepModelLoaded !== undefined) p.voice.keepModelLoaded = !!p.voice.keepModelLoaded;
     if (p.voice.gpu !== undefined && !["auto", "off"].includes(p.voice.gpu)) throw new Error('voice.gpu must be "auto" or "off"');
     if (p.voice.stopPhrases !== undefined) {
       if (!Array.isArray(p.voice.stopPhrases) || !p.voice.stopPhrases.length) throw new Error("At least one stop phrase is required");
       p.voice.stopPhrases = p.voice.stopPhrases.map((w) => String(w).trim()).filter(Boolean);
       if (!p.voice.stopPhrases.length) throw new Error("At least one stop phrase is required");
+    }
+    if (p.voice.conversation !== undefined) p.voice.conversation = !!p.voice.conversation;
+    if (p.voice.followUpMs !== undefined) {
+      const ms = Number(p.voice.followUpMs);
+      // Under two seconds nobody can start a sentence in time; over a minute
+      // the microphone is effectively always open, which is not what this is.
+      if (!Number.isFinite(ms) || ms < 2000 || ms > 60000) throw new Error("followUpMs must be between 2000 and 60000");
+      p.voice.followUpMs = Math.round(ms);
     }
     if (p.voice.maxListenMs !== undefined) {
       const ms = Number(p.voice.maxListenMs);
@@ -155,6 +179,10 @@ function sanitizePartial(partial) {
       const q = p.voice[key];
       if (q && (q.start !== undefined || q.end !== undefined)) validateQuietHours(q, `voice.${key}`);
     }
+  }
+  if (p.tts?.voice !== undefined) {
+    if (typeof p.tts.voice !== "string" || p.tts.voice.length > 120) throw new Error("tts.voice must be the name of a voice installed on this computer");
+    p.tts.voice = p.tts.voice.trim();
   }
   if (p.alerts?.quietHours) validateQuietHours(p.alerts.quietHours, "alerts.quietHours");
   if (p.alerts?.scanIntervalMs !== undefined) {

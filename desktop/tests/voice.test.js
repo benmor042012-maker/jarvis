@@ -405,3 +405,105 @@ test("fast mode and accurate mode are both real settings, and fast is the defaul
   assert.throws(() => config.update({ voice: { gpu: "on" } }), /auto/);
   config.reset();
 });
+
+test("after an answer JARVIS keeps listening, so a conversation needs the wake word once", async () => {
+  const s = makeSession({ conversation: true, followUpMs: 8000 });
+  said = "תתעורר";
+  assert.equal((await s.handleUtterance(wav(), { durationMs: 900 })).action, "woke");
+  said = "מה השעה";
+  assert.equal((await s.handleUtterance(wav(), { durationMs: 1200 })).action, "command");
+  assert.equal(s.state, "speaking");
+  assert.equal(s.listeningUntil, 0, "the command closed the first window");
+
+  // The window says the reply finished: the conversation stays open.
+  const after = s.doneSpeaking();
+  assert.equal(after.listening, true);
+  assert.equal(s.state, "listening");
+  assert.ok(after.listening_until - Date.now() > 6000 && after.listening_until - Date.now() <= 8000);
+
+  // The follow-up is a command in its own right — no wake word in front of it.
+  said = "ותכתוב את זה";
+  const follow = await s.handleUtterance(wav(), { durationMs: 1200 });
+  assert.equal(follow.action, "command");
+  assert.equal(commands.at(-1).text, "ותכתוב את זה");
+});
+
+test("the conversation window is as revocable as any other listening", async () => {
+  // A stop phrase said into the follow-up window ends it with no model.
+  const s = makeSession({ conversation: true, followUpMs: 8000 });
+  s.wakeLocally({ durationMs: 900 });
+  said = "מה השעה";
+  await s.handleUtterance(wav(), { durationMs: 1200 });
+  s.doneSpeaking();
+  assert.equal(s.state, "listening");
+  said = "עצור";
+  const stopped = await s.handleUtterance(wav(), { durationMs: 700 });
+  assert.equal(stopped.action, "stopped");
+  assert.equal(stopped.model_used, false);
+  assert.equal(s.listeningUntil, 0);
+  assert.equal(s.state, "standby");
+
+  // Muted, paused and quiet hours refuse to reopen it at all.
+  for (const [setup, expected] of [
+    [(x) => { x.setMuted(true); }, "muted"],
+    [(x) => { x.setPaused(true); }, "paused"],
+  ]) {
+    const t = makeSession({ conversation: true, followUpMs: 8000 });
+    t._set("speaking", "test");
+    setup(t);
+    t.state = "speaking"; // muting resets the state; this is the answer finishing after it
+    assert.equal(t.doneSpeaking().listening, false, expected);
+    assert.equal(t.listeningUntil, 0);
+  }
+  const now = new Date();
+  const hh = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const quiet = makeSession({ conversation: true, followUpMs: 8000, quietHours: { enabled: true, start: hh(new Date(now.getTime() - 3600000)), end: hh(new Date(now.getTime() + 3600000)) } });
+  quiet._set("speaking", "test");
+  assert.equal(quiet.doneSpeaking().listening, false, "quiet hours");
+  assert.equal(quiet.listeningUntil, 0);
+});
+
+test("with conversation switched off, the wake word is needed for every command", async () => {
+  const s = makeSession({ conversation: false, quietHours: { enabled: false, start: "22:00", end: "07:00" } });
+  s.wakeLocally({ durationMs: 900 });
+  said = "מה השעה";
+  await s.handleUtterance(wav(), { durationMs: 1200 });
+  assert.equal(s.doneSpeaking().listening, false);
+  assert.equal(s.state, "standby");
+  said = "ותכתוב את זה";
+  const next = await s.handleUtterance(wav(), { durationMs: 1200 });
+  assert.equal(next.action, "ignored");
+  assert.equal(next.reason, "no_wake_phrase");
+});
+
+test("a listening window that ran out is over, and the window is told so", async () => {
+  const s = makeSession({ conversation: true, followUpMs: 2000, maxListenMs: 2000 });
+  const realDetect = stt.detect;
+  stt.detect = async () => ({ available: true, engine: "stub", model: null, hebrew: true, reason: null, install: null, checked: [] });
+  try {
+    s.wakeLocally({ durationMs: 900 });
+    assert.equal((await s.status()).state, "listening");
+    s.listeningUntil = Date.now() - 1; // the window closed while nothing was said
+    const st = await s.status();
+    assert.equal(st.state, "standby", "LISTENING must not stay on screen after the window ends");
+    assert.equal(st.listening_until, null);
+    assert.equal(st.conversation, true);
+    assert.equal(st.followUpMs, 2000);
+  } finally {
+    stt.detect = realDetect;
+  }
+});
+
+test("the conversation and voice settings are validated, not trusted", () => {
+  config.reset();
+  assert.throws(() => config.update({ voice: { followUpMs: 500 } }), /followUpMs must be between 2000 and 60000/);
+  assert.throws(() => config.update({ voice: { followUpMs: 120000 } }), /followUpMs must be between 2000 and 60000/);
+  assert.equal(config.update({ voice: { followUpMs: 6000, conversation: "yes" } }).voice.conversation, true);
+  assert.equal(config.load().voice.followUpMs, 6000);
+  // The spoken voice is the name of one installed on this computer — a name,
+  // not a URL and not a service.
+  assert.throws(() => config.update({ tts: { voice: "x".repeat(200) } }), /tts\.voice/);
+  assert.equal(config.update({ tts: { voice: "  Microsoft Asaf  " } }).tts.voice, "Microsoft Asaf");
+  assert.equal(config.DEFAULTS.tts.voice, "", "no voice is pinned until one is chosen");
+  assert.equal(config.DEFAULTS.voice.conversation, true);
+});

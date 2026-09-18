@@ -150,7 +150,8 @@ export interface Settings {
   extraApps: { id: string; title?: string; path: string }[];
   allowedUrlHosts: string[];
   toolPolicies: Record<string, PolicyValue>;
-  tts: { enabled: boolean; lang: string };
+  /** voice: the name of an installed local voice, or "" for the first one for the language. */
+  tts: { enabled: boolean; lang: string; voice: string };
   voice: {
     enabled: boolean;
     language: string;
@@ -166,8 +167,13 @@ export interface Settings {
     mode: "fast" | "accurate";
     /** auto lets the engine use a GPU when the build and the machine have one. */
     gpu: "auto" | "off";
+    /** Keep the model in memory between sentences, when the download came with a server. */
+    keepModelLoaded: boolean;
     transcribeTimeoutMs: number;
     speakReplies: boolean;
+    /** Keep listening for a follow-up after an answer, so a conversation needs the wake word once. */
+    conversation: boolean;
+    followUpMs: number;
   };
   alerts: {
     enabled: boolean;
@@ -414,6 +420,8 @@ export interface VoiceStatus {
     checked: { whisperBinaries: string[]; whisperModels: string[]; vosk: unknown };
     /** How fast each model has been here, and any switch made to keep up. */
     speed?: {
+      /** Whether a speech server is holding the model in memory. */
+      server?: { running: boolean; model: string | null; port: number | null };
       mode?: "fast" | "accurate";
       gpu?: "auto" | "off";
       fallback: { from: string; to: string; ms: number } | null;
@@ -426,6 +434,8 @@ export interface VoiceStatus {
   stopPhrases: string[];
   quietHours: { enabled?: boolean; start?: string; end?: string; active: boolean };
   maxListenMs: number;
+  conversation: boolean;
+  followUpMs: number;
   keepAudio: boolean;
   paused: boolean;
   muted: boolean;
@@ -437,7 +447,7 @@ export interface VoiceStatus {
 
 export interface VoiceHistoryEntry {
   at: number;
-  kind: "stop" | "ignored" | "false_wake" | "quiet_hours" | "wake" | "empty" | "command";
+  kind: "stop" | "ignored" | "false_wake" | "quiet_hours" | "wake" | "empty" | "command" | "follow_up";
   text?: string;
   phrase?: string;
   why?: string;

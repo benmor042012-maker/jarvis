@@ -641,17 +641,38 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     const s = get();
     const speakReplies = (s.settings?.tts.enabled ?? true) && (s.settings?.voice.speakReplies ?? true);
     if (!speakReplies || s.voice?.muted) {
-      await api.voiceDoneSpeaking().catch(() => undefined);
+      // Nothing is said out loud, but the answer is over, and the agent still
+      // decides what follows it — including reopening the conversation window.
+      try {
+        const quiet = await api.voiceDoneSpeaking();
+        set({ voice: quiet });
+        applyVoiceState(quiet.state);
+      } catch {
+        /* the next status poll corrects this */
+      }
       return;
     }
     const lang = s.settings?.tts.lang ?? (s.settings?.language === "en" ? "en-US" : "he-IL");
-    const res = await speak(text, lang);
+    // Deaf while speaking, and for a moment after: the answer plays through the
+    // same speakers the microphone is listening to.
+    if (get().listening) capture().setDeaf(true);
+    let res;
+    try {
+      res = await speak(text, lang, s.settings?.tts.voice || null);
+    } finally {
+      await new Promise((r) => setTimeout(r, 250));
+      capture().setDeaf(false);
+    }
     if (!res.spoken && res.reason && get().ttsNote !== res.reason) {
       set({ ttsNote: res.reason });
       get().addLog("warn", res.reason, res.fix ?? undefined);
     }
     try {
-      set({ voice: await api.voiceDoneSpeaking() });
+      // The agent decides what comes after an answer: with conversation on it
+      // reopens the listening window here, and the orb has to follow it.
+      const after = await api.voiceDoneSpeaking();
+      set({ voice: after });
+      applyVoiceState(after.state);
     } catch {
       /* the next status poll corrects this */
     }
@@ -940,6 +961,9 @@ async function handleUtterance(res: UtteranceResult): Promise<void> {
       const speaking = s.say(plan.message);
       if (res.job) await followJob(res.job);
       await speaking;
+      // With conversation on, say() has already reopened the listening window
+      // and moved the orb: going to sleep here would contradict it on screen.
+      if (useJarvis.getState().voice?.state === "listening") return;
       sleepSound();
       deriveOrb();
       return;
@@ -1239,7 +1263,7 @@ export function speakAlert(alert: CustomerAlert): Promise<unknown> {
   const text = full
     ? he ? `שים לב: ${alert.customer_name}. ${alert.headline}.` : `Attention: ${alert.customer_name}. ${alert.headline}.`
     : he ? `שים לב, לקוח דורש תשומת לב: ${alert.customer_name}.` : `Attention: a customer needs you — ${alert.customer_name}.`;
-  return speak(text, s.settings?.tts.lang ?? (he ? "he-IL" : "en-US"));
+  return speak(text, s.settings?.tts.lang ?? (he ? "he-IL" : "en-US"), s.settings?.tts.voice || null);
 }
 
 export function showNotification(alert: CustomerAlert): void {

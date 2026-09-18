@@ -80,6 +80,13 @@ class VoiceSession extends EventEmitter {
     const v = cfg.voice || {};
     const engine = await stt.detect(cfg, { force });
     const quiet = inQuietHours(v.quietHours);
+    // A listening window that has run out is over, whether or not anything was
+    // said in it. Without this the window would say LISTENING for ever after a
+    // wake nobody followed up on.
+    if (this.state === "listening" && this.listeningUntil && Date.now() > this.listeningUntil) {
+      this.listeningUntil = 0;
+      this._set("standby", "listen_window_ended");
+    }
     let state = this.state;
     if (!v.enabled) state = "off";
     else if (!engine.available) state = "unavailable";
@@ -109,6 +116,10 @@ class VoiceSession extends EventEmitter {
       stopPhrases: v.stopPhrases || [],
       quietHours: { ...(v.quietHours || {}), active: quiet },
       maxListenMs: v.maxListenMs,
+      // Whether an answer is followed by a few seconds of listening, so the
+      // next sentence needs no wake word.
+      conversation: v.conversation !== false,
+      followUpMs: this._followUpMs(),
       keepAudio: !!v.keepAudio,
       paused: this.paused,
       muted: this.muted,
@@ -329,9 +340,36 @@ class VoiceSession extends EventEmitter {
     }
   }
 
-  /** The window tells us it finished speaking the reply. */
+  /** How long to keep listening after an answer, when conversation is on. */
+  _followUpMs() {
+    const v = this.cfg();
+    const ms = Number(v.followUpMs);
+    return Number.isFinite(ms) && ms >= 2000 && ms <= 60000 ? Math.round(ms) : 8000;
+  }
+
+  /**
+   * The window tells us it finished speaking the reply.
+   *
+   * With conversation switched on this is where a conversation continues:
+   * instead of going back to standby and waiting to be called again, the
+   * listening window reopens for a few seconds, so "מה השעה" can be followed by
+   * "ותכתוב את זה" without saying the wake word in between. Nothing is relaxed
+   * to do it — a stop phrase, the emergency stop, mute, pause and quiet hours
+   * all close it at once, and it closes by itself when the time is up.
+   */
   doneSpeaking() {
-    if (this.state === "speaking" || this.state === "thinking") this.reset("spoke");
+    if (this.state !== "speaking" && this.state !== "thinking") return { listening: this.state === "listening", listening_until: this.listeningUntil || null };
+    const v = this.cfg();
+    const blocked = this._blocked();
+    if (v.conversation === false || blocked.blocked || inQuietHours(v.quietHours)) {
+      this.reset("spoke");
+      return { listening: false, listening_until: null };
+    }
+    this.listeningUntil = Date.now() + this._followUpMs();
+    this._set("listening", "follow_up");
+    this._remember({ kind: "follow_up", text: "" });
+    this.emit("event", { type: "voice", event: "woke", phrase: null, until: this.listeningUntil, follow_up: true });
+    return { listening: true, listening_until: this.listeningUntil };
   }
 }
 

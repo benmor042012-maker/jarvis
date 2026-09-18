@@ -47,6 +47,14 @@ npm run voice
 מנוע הדיבור עובד רק על הפקודה עצמה. ההקלטות לא יוצאות מהמחשב ולא נשמרות כקול: נשמרים כמה מאות
 מספרים שמתארים את צורת הצליל.
 
+**שיחה רציפה:** אחרי שג'רביס עונה, הוא ממשיך להקשיב עוד כמה שניות — אפשר להמשיך לדבר בלי
+להגיד "תתעורר" שוב. "עצור", "תעצור", "חירום", השתקה, השהיה ושעות שקט סוגרים את החלון הזה מייד,
+והוא נסגר לבד אחרי הזמן שנקבע. אפשר לכבות או לשנות: **Settings → Voice**.
+
+**קול טבעי:** ב-**Settings** אפשר לבחור באיזה קול ג'רביס מדבר, מתוך הקולות שמותקנים במחשב
+בלבד (יש כפתור *Hear this voice* כדי לשמוע). קול עברי חינמי מוסיפים ב-Windows:
+Settings → Time & language → Speech → Manage voices.
+
 **לדיבור — קחו את `small` (466 מגה, חינם).** הוא עונה בערך בשנייה, וזה מה שהופך את זה לשיחה.
 `turbo` מדייק יותר, אבל לוקח כמה שניות למשפט על מחשב רגיל — קחו אותו רק אם דיוק חשוב לכם יותר
 ממהירות. אם המודל שמותקן איטי מדי כאן, ג'רביס עובר לבד למודל המהיר יותר שכבר קיים אצלכם ואומר
@@ -110,6 +118,9 @@ voice detector, and posts them to the agent, which transcribes them with a speec
 **installed on your computer** (whisper.cpp, or Vosk when its optional binding is present).
 Say **"תתעורר"** to wake it, then your command. Say **"עצור"**, **"תעצור"** or **"חירום"**
 to stop everything — those are matched on the transcript, so they work with no AI model at all.
+After an answer JARVIS keeps listening for a few seconds, so a follow-up needs no wake word
+(Settings → Voice; the stop phrases, mute, pause and quiet hours all close that window at once).
+Replies are spoken by a voice installed on this computer — pick which one in Settings.
 Quiet hours, a maximum listening time, false-wake protection and configurable phrases are in
 Settings → Voice. No audio is uploaded anywhere and none is kept: the agent writes one temporary
 WAV for the engine and deletes it immediately unless you switch "keep recordings" on.
@@ -239,6 +250,13 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- **The model stays in memory between sentences.** The command-line engine reloads it from disk every
+  time — with a 466 MB model that is most of the wait, and it is why a one-second sentence could take
+  nine. whisper.cpp ships `whisper-server` in the same download, so JARVIS keeps one running on
+  127.0.0.1 (a port the system hands out, never exposed, stopped when idle or when JARVIS quits) and
+  posts the audio to it. No server binary, or it will not start? It falls straight back to the
+  command-line program, which always works. Settings → Voice → *Model in memory* says which is
+  happening; `keepModelLoaded: false` turns it off.
 - **Fast mode and Accurate mode.** Fast (the default) runs the smallest installed model that still
   does Hebrew, one decoding pass, and only as much of the encoder as the recording needs — it is
   meant to answer while you are still listening for it. Accurate runs the model you configured, full
@@ -266,6 +284,16 @@ Export or delete all of it from **Activity log → Export my data / Delete local
   the sound in the page itself (MFCC features, dynamic time warping) in about a millisecond — no
   model, no download, no network. The tolerance comes from how much your own three recordings differ.
   Without it, everything still works; waking just waits for the engine.
+- **A conversation, not a series of commands.** When JARVIS finishes answering, the listening
+  window reopens for a few seconds (`voice.followUpMs`, eight by default), so the next sentence
+  does not need the wake word again. Nothing is relaxed to do it: a stop phrase, the emergency
+  stop, mute, pause and quiet hours all end it immediately, it closes by itself when the time is
+  up, and the microphone is deaf while JARVIS speaks so its own voice can never become the next
+  command. Switch it off in Settings → Voice and every command needs the wake word again.
+- **It speaks with a voice that is on this computer.** The voice list in Settings shows only
+  voices with `localService`, so nothing said out loud is synthesised by a remote service. If no
+  local voice exists for the language, JARVIS says so and stays silent rather than reading Hebrew
+  with an English voice; Windows adds Hebrew voices free under Time & language → Speech.
 - **Voice needs a speech engine installed on the computer.** `npm run voice` (or a double-click on
   `INSTALL-VOICE.bat`) fetches it and a multilingual model for you, then asks JARVIS whether it can
   actually hear you before saying it is ready. It recommends `small`, which answers in about a
