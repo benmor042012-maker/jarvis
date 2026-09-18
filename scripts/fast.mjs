@@ -22,7 +22,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { LADDER, pickFastest } from "./lib/pick-model.mjs";
-import { download } from "./lib/whisper-install.mjs";
+import { download, looksLikeModel } from "./lib/whisper-install.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", g: "\x1b[32m", y: "\x1b[33m", c: "\x1b[36m", red: "\x1b[31m" };
@@ -81,9 +81,15 @@ async function measure(engine, model, cfg0, sample) {
   // modelPinned, or the agent's own "a better model is sitting beside this weak
   // one" rule would quietly measure ggml-small three times over.
   const cfg = { ...cfg0, voice: { ...cfg0.voice, whisperPath: engine, whisperModel: model, modelPinned: true, mode: "fast", keepModelLoaded: true } };
+  // Once, to pick up the model that has just been named — not per round. The
+  // measured time starts before the engine is looked for, and on Windows that
+  // look-up spawns the program to ask its version, which the virus scanner
+  // reads the whole binary for. Re-doing it every round put seconds into every
+  // number here that JARVIS never pays while it is running: it looks once and
+  // remembers for fifteen seconds.
+  stt.resetCache();
   const runs = [];
   for (let i = 0; i < ROUNDS + 1; i++) {
-    stt.resetCache();
     const out = await stt.transcribe(sample, { cfg, language: cfg0.voice?.language || "he" });
     if (i > 0) runs.push(out.tookMs);
   }
@@ -91,7 +97,14 @@ async function measure(engine, model, cfg0, sample) {
 }
 
 console.log(`\n${C.b}JARVIS — as fast as this computer can answer${C.r}`);
-console.log(`${C.dim}Measured here, on this processor. Nothing is downloaded unless it is needed.${C.r}\n`);
+console.log(`${C.dim}Measured here, on this processor. Nothing is downloaded unless it is needed.${C.r}`);
+// Said plainly, because it is the difference between a number you can plan
+// around and one you cannot: the clip these models are timed on is generated,
+// not recorded. Whisper keeps guessing at sound that is not speech, and a model
+// that is unsure guesses for longer — which is why a smaller model can come out
+// slower here than a larger one. Use these to compare models with each other;
+// the time for your own voice is the one the window shows after you talk to it.
+console.log(`${C.dim}The clip is synthetic, so these times compare the models rather than predict your speech.${C.r}\n`);
 
 const cfg0 = config.load();
 const engine = cfg0.voice?.whisperPath?.trim();
@@ -122,6 +135,13 @@ const out = await pickFastest({
   fetchModel: async (file, dest) => {
     try {
       await download(`${MODEL_BASE}/${file}`, dest, { label: file });
+      // What came back has to be a model. A half-finished download, or a web
+      // page from a link that redirected, looks like a file and then makes the
+      // engine fail with "failed to initialize whisper context" days later.
+      if (!looksLikeModel(dest)) {
+        unlinkSync(dest);
+        throw new Error("what came back is not a speech model (the file does not start with the GGML marker), so it was deleted");
+      }
       console.log("done");
     } catch (e) {
       // A half-written file would look installed next time round.

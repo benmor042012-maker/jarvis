@@ -96,6 +96,17 @@ async function boot() {
   agent.ownerDevice();
   const cfg = config.load();
   createTray();
+  // Windows groups taskbar buttons by this id and takes the icon from the group,
+  // not from the window: without it a JARVIS started from the command line shows
+  // Electron's own icon on the taskbar however the window is set up. The built
+  // installer sets it from package.json; running from source has to say it here.
+  if (process.platform === "win32") {
+    try {
+      app.setAppUserModelId(require("./package.json").build?.appId || "local.jarvis.desktop");
+    } catch {
+      /* older Electron: the taskbar keeps its default icon, nothing else breaks */
+    }
+  }
   createWindow();
   registerHotkey(cfg);
   applyAutoStart(cfg);

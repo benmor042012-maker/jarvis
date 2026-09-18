@@ -18,6 +18,14 @@ test("every agent state has a tray icon", () => {
   states.add(s.compute());
   for (const state of states) assert.ok(fs.existsSync(path.join(ROOT, "assets", `tray-${state}.png`)), `missing tray-${state}.png`);
   assert.ok(fs.existsSync(path.join(ROOT, "assets", "icon.png")));
+  // Windows takes the taskbar icon from the application id's group, not from
+  // the window: without this a JARVIS run from the command line shows Electron's
+  // own icon however the window is set up, which reads as "the picture was not
+  // changed". The id has to be the installer's, or the built app and the one run
+  // from source would be two different applications to Windows.
+  const main = fs.readFileSync(path.join(ROOT, "main.js"), "utf8");
+  assert.match(main, /setAppUserModelId/);
+  assert.match(main, /build\?\.appId/, "and it must come from the same appId the installer uses");
 });
 
 test("main.js wires the required desktop behaviours", () => {

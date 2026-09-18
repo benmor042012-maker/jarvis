@@ -88,6 +88,26 @@ function modelCandidates(cfg) {
   return out;
 }
 
+// Every GGML model begins with one of these four bytes, whichever way round
+// the machine writes them. A file that does not is not a model: most often an
+// interrupted download, or a web page an unauthenticated link handed back
+// instead of the file.
+const GGML_MAGIC = ["ggml", "lmgg"];
+
+/** Whether this file really is a speech model, and not the wreck of a download. */
+function isModelFile(file) {
+  try {
+    if (fs.statSync(file).size < 1024 * 1024) return false;
+    const fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(4);
+    fs.readSync(fd, head, 0, 4, 0);
+    fs.closeSync(fd);
+    return GGML_MAGIC.includes(head.toString("ascii"));
+  } catch {
+    return false;
+  }
+}
+
 // Only absolute-ish candidates; bare names are probed on PATH separately.
 function firstExisting(list) {
   for (const p of list) {
@@ -272,6 +292,20 @@ async function detect(cfg, { force = false } = {}) {
     if (bare && (await onPath(bare))) binary = bare;
   }
   const model = firstExisting(modCandidates);
+
+  if (binary && model && !isModelFile(model)) {
+    // Caught here rather than at the first sentence: the engine's own words for
+    // this are "failed to initialize whisper context", which says nothing about
+    // the file being the problem, and it says them seconds after you speak.
+    result.engine = "whisper.cpp";
+    result.binary = binary;
+    result.model = model;
+    result.available = false;
+    result.reason = `The model file ${path.basename(model)} is damaged — it is not a speech model. That is almost always an interrupted download, or a link that handed back a web page instead of the file. Nothing can be transcribed until it is replaced.`;
+    result.install = { ...INSTALL_STEPS.whisper, note: `Delete ${model} and run  npm run voice  to fetch a working one (free, no account).` };
+    cache = { at: Date.now(), value: result };
+    return result;
+  }
 
   if (binary && model) {
     result.engine = "whisper.cpp";
@@ -498,6 +532,17 @@ function engineFailure(res, d) {
     e.exit = code;
     return e;
   }
+  // "failed to initialize whisper context" is what whisper.cpp says when the
+  // file it was given is not a model it can load. On its own it reads like the
+  // engine is broken, and people reinstall the engine instead of the model.
+  if (/failed to initialize whisper context|invalid model|not a whisper model/i.test(said)) {
+    const e = new Error(`The speech engine could not load ${path.basename(d.model)}: the file is damaged, not a speech model. That is almost always an interrupted download, or a link that handed back a web page instead of the file. Delete it and run  npm run voice  to fetch a working one (free, no account).`);
+    e.status = 500;
+    e.code = "speech_model_damaged";
+    e.exit = code;
+    e.install = { ...INSTALL_STEPS.whisper, note: `Delete ${d.model} and run  npm run voice` };
+    return e;
+  }
   if (said) {
     return Object.assign(new Error(`The speech engine failed (exit ${String(code)}): ${said.slice(0, 300)}`), { status: 500, code: "speech_engine_failed", exit: code });
   }
@@ -543,4 +588,4 @@ function cleanup(text) {
 }
 
 module.exports = {
-  speedReport, whisperArgs, chooseModel, modelCandidates, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
+  speedReport, whisperArgs, chooseModel, modelCandidates, isModelFile, TARGET_MS, detect, transcribe, resetCache, isWav, cleanup, engineFailure, INSTALL_STEPS };
