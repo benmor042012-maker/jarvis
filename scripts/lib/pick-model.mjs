@@ -90,3 +90,27 @@ function baseName(p) {
   const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return i < 0 ? p : p.slice(i + 1);
 }
+
+/**
+ * What the installer should do with what the person typed at the menu.
+ *
+ * Kept here, next to the ladder, because it is the same decision seen from the
+ * other side — and because the installer reads its answer from a terminal,
+ * which a test cannot supply: with stdin piped there is no TTY and the prompt
+ * returns nothing at all. The rule is worth covering, so it lives where it can
+ * be called directly.
+ *
+ *   ""          keep what is in use
+ *   a name on the menu, already downloaded   use it
+ *   a name on the menu, not downloaded       download it, then use it
+ *   anything else                            change nothing, and say so
+ */
+export function resolveChoice(want, currentFile, { exists, join, dir, models = LADDER, ids = {} }) {
+  const answer = String(want ?? "").trim().toLowerCase();
+  if (!answer) return { kind: "keep", file: currentFile };
+  const model = models.find((m) => (ids[m.file] ?? m.file) === answer || m.file === answer || (m.id ?? "") === answer);
+  if (!model) return { kind: "unknown", answer, file: currentFile };
+  const file = join(dir, model.file);
+  if (file === currentFile) return { kind: "keep", file: currentFile, model };
+  return exists(file) ? { kind: "use", file, model } : { kind: "download", file, model };
+}

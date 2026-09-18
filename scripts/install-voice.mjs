@@ -288,23 +288,43 @@ try {
     }
   } else if (modelFile) {
     ok(`A speech model is already here: ${path.basename(modelFile)}${configured ? " (the one JARVIS is set to use)" : ""}`);
-    const others = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).filter((f) => f !== modelFile && fs.existsSync(f) && looksLikeModel(f));
-    if (others.length) {
-      // Several are installed, so this is a choice, not a fact: switching
-      // between them should not mean deleting a 1.6 GB download.
-      console.log(`\n  Also installed here:`);
-      for (const f of [modelFile, ...others]) {
-        const m = MODELS.find((x) => x.file === path.basename(f));
-        const mark = f === modelFile ? `${C.g}→${C.r}` : " ";
-        console.log(`  ${mark} ${C.b}${(m?.id ?? path.basename(f)).padEnd(7)}${C.r} ${C.dim}${m?.why ?? ""}${C.r}`);
+    // Every model is offered, not only the ones already downloaded: on a
+    // modest processor the answer to "it takes twelve seconds" is a smaller
+    // model, and a menu that only lists what is already here cannot give it.
+    // Asking for one that is not installed downloads it.
+    console.log(`\n  Models that understand Hebrew:`);
+    for (const m of MODELS) {
+      const file = path.join(SPEECH_DIR, m.file);
+      const have = fs.existsSync(file) && looksLikeModel(file);
+      const mark = file === modelFile ? `${C.g}→${C.r}` : " ";
+      const state = file === modelFile ? "in use" : have ? "installed" : `${String(m.mb)} MB download`;
+      console.log(`  ${mark} ${C.b}${m.id.padEnd(7)}${C.r} ${C.dim}${state.padEnd(16)} ${m.why}${C.r}`);
+    }
+    const want = (await ask(rl, `\n  Which should JARVIS use? [${MODELS.find((x) => x.file === path.basename(modelFile))?.id ?? "keep"}] `)).trim().toLowerCase();
+    const choice = resolveChoice(want, modelFile, {
+      exists: (f) => fs.existsSync(f) && looksLikeModel(f),
+      join: path.join,
+      dir: SPEECH_DIR,
+      models: MODELS,
+    });
+    if (choice.kind === "unknown") {
+      console.log(`  ${C.y}"${choice.answer}" is not one of the names above — keeping ${path.basename(modelFile)}.${C.r}`);
+    } else if (choice.kind === "use") {
+      modelFile = choice.file;
+      ok(`JARVIS will use ${path.basename(modelFile)}.`);
+    } else if (choice.kind === "download") {
+      say(`Downloading ${choice.model.file} (about ${String(choice.model.mb)} MB). This is the long part.`);
+      await download(`${MODEL_BASE}/${choice.model.file}`, choice.file, { label: "model", onProgress: progress("model") });
+      clearLine();
+      if (!looksLikeModel(choice.file)) {
+        fs.rmSync(choice.file, { force: true });
+        throw new Error("What came back is not a speech model — the file does not start with the GGML marker. Nothing was kept.");
       }
-      const want = (await ask(rl, `\n  Which should JARVIS use? [${MODELS.find((x) => x.file === path.basename(modelFile))?.id ?? "keep"}] `)).trim().toLowerCase();
-      const picked = MODELS.find((m) => m.id === want);
-      const pickedFile = picked ? path.join(SPEECH_DIR, picked.file) : null;
-      if (pickedFile && fs.existsSync(pickedFile) && looksLikeModel(pickedFile)) {
-        modelFile = pickedFile;
-        ok(`JARVIS will use ${path.basename(modelFile)}.`);
-      }
+      modelFile = choice.file;
+      ok(`Model installed: ${path.basename(modelFile)} (${fmtMb(fs.statSync(modelFile).size)})`);
+      // The old one stays: it is the user's file, and a 466 MB download is not
+      // ours to delete behind their back.
+      console.log(`  ${C.dim}The previous model is still in ${SPEECH_DIR} — delete it yourself if you want the space back.${C.r}`);
     }
   } else {
     const fits = MODELS.filter((m) => m.needsGb <= ramGb);

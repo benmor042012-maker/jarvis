@@ -276,6 +276,37 @@ test("npm run fast: the choice walks down only as far as it must, and stops at t
   assert.deepEqual(below("ggml-tiny.bin"), [], "nothing below the smallest");
 });
 
+test("the voice installer offers every model, and a name that is not downloaded yet is fetched", async () => {
+  // The gap this closes, seen on a real machine: with ggml-small already here,
+  // the menu listed only what was on the disk, and typing the name of anything
+  // else did nothing at all — so the one answer to "this computer needs twelve
+  // seconds a sentence", a smaller model, could not be given from the installer.
+  // The installer reads its answer from a terminal, which a test cannot supply
+  // (piped stdin is not a TTY and the prompt returns ""), so the rule itself is
+  // what is covered here.
+  const { resolveChoice } = await import(require("url").pathToFileURL(path.join(SCRIPTS, "lib", "pick-model.mjs")).href);
+  const MODELS = [
+    { id: "small", file: "ggml-small.bin", mb: 466 },
+    { id: "base", file: "ggml-base.bin", mb: 148 },
+    { id: "tiny", file: "ggml-tiny.bin", mb: 75 },
+  ];
+  const dir = "/speech";
+  const here = new Set(["/speech/ggml-small.bin"]);
+  const ask = (want) => resolveChoice(want, "/speech/ggml-small.bin", { exists: (f) => here.has(f), join: (...p) => p.join("/"), dir, models: MODELS });
+
+  assert.deepEqual(ask("base"), { kind: "download", file: "/speech/ggml-base.bin", model: MODELS[1] }, "not here yet: fetch it");
+  here.add("/speech/ggml-base.bin");
+  assert.equal(ask("base").kind, "use", "already here: just switch");
+  assert.equal(ask("").kind, "keep", "Enter keeps what is in use");
+  assert.equal(ask("small").kind, "keep", "asking for the one in use changes nothing");
+  assert.equal(ask("BASE").kind, "use", "the answer is not case-sensitive");
+  assert.equal(ask("ggml-tiny.bin").kind, "download", "the file name works as well as the short name");
+  const nonsense = ask("enormous");
+  assert.equal(nonsense.kind, "unknown");
+  assert.equal(nonsense.answer, "enormous");
+  assert.equal(nonsense.file, "/speech/ggml-small.bin", "and nothing changes");
+});
+
 test("npm run fast is wired, asks for nothing paid, and says so when there is no engine to measure", () => {
   const os = require("os");
   const { spawnSync } = require("child_process");

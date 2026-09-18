@@ -440,12 +440,17 @@ test("re-running the installer keeps the model JARVIS is already set to use", as
   const cfg = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
   assert.equal(cfg.voice.whisperModel, turbo, `the configured model must survive. Output:\n${r.out}`);
   assert.match(r.out, /the one JARVIS is set to use/, r.out);
-  // Both are listed, with the one in use marked — switching between them is a
-  // choice to make here, not a 1.6 GB file to delete. (The prompt itself is not
-  // asserted: with stdin closed, readline never echoes it.)
-  assert.match(r.out, /Also installed here/, r.out);
-  assert.match(r.out, /turbo/, "the one in use");
-  assert.match(r.out, /small/, "and the one it is not using");
+  // Every model is listed, with the one in use marked and the rest showing
+  // whether they are here or a download — because on a slow computer the answer
+  // is a smaller model, and a menu of only what is already installed cannot
+  // offer it. (The prompt itself is not asserted: with stdin closed, readline
+  // never echoes it.)
+  // The menu is coloured, so the codes come out between the words.
+  const plain = r.out.replace(/\u001B\[[0-9;]*m/g, "");
+  assert.match(plain, /Models that understand Hebrew/, plain);
+  assert.match(plain, /turbo\s+in use/, "the one in use is marked as such");
+  assert.match(plain, /small\s+installed/, "and the other one it already has");
+  assert.match(plain, /base\s+148 MB download/, "one it does not have yet is offered as a download");
   assert.equal(fs.existsSync(small), true, "nothing is deleted");
   fs.rmSync(home, { recursive: true, force: true });
 });
