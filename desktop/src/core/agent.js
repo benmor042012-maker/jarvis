@@ -201,7 +201,7 @@ class Agent extends EventEmitter {
   }
 
   updateSettings(partial, device) {
-    const allowed = ["mode", "language", "autoStart", "hotkeys", "server", "offlineMode", "ai", "approvedFolders", "extraApps", "allowedUrlHosts", "toolPolicies", "tts", "voice", "alerts", "phone", "drafts", "deviceExpiryDays", "privacy"];
+    const allowed = ["mode", "language", "autoStart", "hotkeys", "server", "offlineMode", "ai", "approvedFolders", "extraApps", "allowedUrlHosts", "toolPolicies", "tts", "voice", "alerts", "phone", "drafts", "contacts", "deviceExpiryDays", "privacy"];
     const clean = {};
     for (const k of allowed) if (partial[k] !== undefined) clean[k] = partial[k];
     if (clean.approvedFolders) {

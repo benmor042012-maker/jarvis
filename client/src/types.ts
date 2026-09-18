@@ -184,6 +184,8 @@ export interface Settings {
   };
   phone: { enabled: boolean; simulation: boolean; allowDialer: boolean };
   drafts: { senderName: string; businessName: string };
+  /** People JARVIS may open a WhatsApp chat with, by name. Kept on this computer only. */
+  contacts: { name: string; phone: string }[];
   deviceExpiryDays: number;
   privacy: { keepAuditDays: number };
   hotkeyActive?: HotkeyInfo;
@@ -539,4 +541,14 @@ export interface CallRequest {
   draft: string;
   requested_by: string;
   hash: string;
+}
+
+/** Read-only numbers from the computer itself, for the Command Center. */
+export interface SystemStatus {
+  computer: string;
+  uptime_hours: number;
+  memory_free_gb: number;
+  memory_total_gb: number;
+  battery: { percent: number; charging: boolean } | null;
+  disks: { drive: string; free_gb: number; total_gb: number }[];
 }
