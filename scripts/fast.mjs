@@ -21,6 +21,7 @@ import { cpus, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { LADDER, pickFastest } from "./lib/pick-model.mjs";
 import { download } from "./lib/whisper-install.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,16 +39,6 @@ const MODEL_BASE = process.env.JARVIS_WHISPER_MODEL_BASE ?? "https://huggingface
 // the wake word is already instant in the window whatever this says.
 const TARGET_MS = 1200;
 const ROUNDS = 3;
-
-// Multilingual models only — the ".en" builds cannot do Hebrew at any size.
-// Ordered fastest last: this walks down only as far as it has to.
-const LADDER = [
-  { file: "ggml-large-v3-turbo.bin", mb: 1624, hebrew: "the best Hebrew there is" },
-  { file: "ggml-medium.bin", mb: 1533, hebrew: "very good Hebrew" },
-  { file: "ggml-small.bin", mb: 466, hebrew: "good Hebrew, drops a letter now and then" },
-  { file: "ggml-base.bin", mb: 148, hebrew: "rough Hebrew — gets short words wrong" },
-  { file: "ggml-tiny.bin", mb: 75, hebrew: "poor Hebrew — short commands only" },
-];
 
 const ms = (n) => `${String(Math.round(n))} ms`;
 const secs = (n) => `${String(Math.round(n / 100) / 10)}s`;
@@ -118,98 +109,74 @@ const ramGb = Math.round(totalmem() / 1024 ** 3);
 console.log(`${C.dim}This computer: ${String(cores)} processor cores, ${String(ramGb)} GB memory · engine ${basename(engine)}${C.r}\n`);
 
 const sample = sampleWav();
-const installed = (f) => existsSync(join(speechDir, f));
 const current = cfg0.voice?.whisperModel?.trim() || LADDER.map((m) => join(speechDir, m.file)).find(existsSync) || "";
+if (!current) console.log(`${C.y}No model is installed yet — the smaller ones will be tried from scratch.${C.r}`);
 
-// --- 1. what it does now -----------------------------------------------------
-let before = null;
-if (current && existsSync(current)) {
-  process.stdout.write(`  measuring ${basename(current)}… `);
-  try {
-    before = await measure(engine, current, cfg0, sample);
-    console.log(`${before <= TARGET_MS ? C.g : C.y}${ms(before)}${C.r} per sentence`);
-  } catch (e) {
-    console.log(`${C.red}could not run it: ${e.message.slice(0, 120)}${C.r}`);
-  }
-} else {
-  console.log(`${C.y}No model is installed yet.${C.r}`);
-}
-
-if (before !== null && before <= TARGET_MS) {
-  config.update({ voice: { mode: "fast", keepModelLoaded: true } });
-  console.log(`\n${C.g}${C.b}Already fast:${C.r} ${basename(current)} answers in ${secs(before)} here.`);
-  console.log(`Model kept in memory: on. Fast mode: on. Nothing else to change.\n`);
-  whisperServer.stop("done");
-  process.exit(0);
-}
-
-// --- 2. walk down the ladder until one keeps up ------------------------------
-const startAt = current ? LADDER.findIndex((m) => m.file.toLowerCase() === basename(current).toLowerCase()) : -1;
-const below = LADDER.slice(startAt >= 0 ? startAt + 1 : LADDER.length - 2);
-
-if (!below.length) {
-  console.log(`\n${C.y}${basename(current)} is already the smallest model there is, and it needs ${secs(before ?? 0)} here.${C.r}`);
-  console.log(`That is this processor's speed, not a setting. The wake word stays instant either way.\n`);
-  whisperServer.stop("done");
-  process.exit(0);
-}
-
-console.log(`\n${C.dim}Too slow for talking to. Trying the smaller models below it.${C.r}`);
-
-let best = before !== null ? { model: current, took: before } : null;
-for (const step of below) {
-  const dest = join(speechDir, step.file);
-  if (!installed(step.file)) {
-    process.stdout.write(`  downloading ${step.file} (${String(step.mb)} MB, free)… `);
+const out = await pickFastest({
+  current,
+  speechDir,
+  join,
+  targetMs: TARGET_MS,
+  exists: existsSync,
+  measure: (model) => measure(engine, model, cfg0, sample),
+  fetchModel: async (file, dest) => {
     try {
-      await download(`${MODEL_BASE}/${step.file}`, dest, { label: step.file });
+      await download(`${MODEL_BASE}/${file}`, dest, { label: file });
       console.log("done");
     } catch (e) {
-      console.log(`${C.y}could not download: ${e.message.slice(0, 100)}${C.r}`);
+      // A half-written file would look installed next time round.
       try { if (existsSync(dest)) unlinkSync(dest); } catch { /* nothing to clean */ }
-      continue;
+      throw e;
     }
-  }
-  process.stdout.write(`  measuring ${step.file}… `);
-  let took;
-  try {
-    took = await measure(engine, dest, cfg0, sample);
-  } catch (e) {
-    console.log(`${C.red}could not run it: ${e.message.slice(0, 100)}${C.r}`);
-    continue;
-  }
-  console.log(`${took <= TARGET_MS ? C.g : C.y}${ms(took)}${C.r}  ${C.dim}${step.hebrew}${C.r}`);
-  if (!best || took < best.took) best = { model: dest, took, step };
-  if (took <= TARGET_MS) break;
-}
+  },
+  onStep: (step) => {
+    if (step.kind === "measured") {
+      console.log(`  ${step.file.padEnd(24)} ${step.ok ? C.g : C.y}${ms(step.ms).padStart(8)}${C.r} per sentence${step.hebrew ? `  ${C.dim}${step.hebrew}${C.r}` : ""}`);
+      if (!step.ok && step.file === basename(current)) console.log(`\n${C.dim}Too slow for talking to. Trying the smaller models below it.${C.r}`);
+    } else if (step.kind === "downloading") {
+      process.stdout.write(`  downloading ${step.file} (${String(step.mb)} MB, free)… `);
+    } else if (step.kind === "download_failed") {
+      console.log(`${C.y}could not download: ${step.error.slice(0, 100)}${C.r}`);
+    } else if (step.kind === "failed") {
+      console.log(`  ${C.red}${step.file}: could not run it — ${step.error.slice(0, 100)}${C.r}`);
+    }
+  },
+});
 
-// --- 3. keep the fastest, and say what it cost -------------------------------
-if (!best) {
+if (!out.model) {
   console.log(`\n${C.red}Nothing could be measured, so nothing was changed.${C.r}\n`);
   whisperServer.stop("done");
   process.exit(1);
 }
 
-// Pinned, so the agent does not promote the machine back to a model it has
-// just been measured as unable to run in time.
-config.update({ voice: { whisperModel: best.model, modelPinned: true, mode: "fast", keepModelLoaded: true, gpu: "auto" } });
-const size = Math.round(statSync(best.model).size / 1024 / 1024);
+if (!out.changed && out.before !== null && out.before <= TARGET_MS) {
+  config.update({ voice: { mode: "fast", keepModelLoaded: true } });
+  console.log(`\n${C.g}${C.b}Already fast:${C.r} ${basename(out.model)} answers in ${secs(out.took)} here.`);
+  console.log(`Model kept in memory: on. Fast mode: on. Nothing else to change.\n`);
+  whisperServer.stop("done");
+  process.exit(0);
+}
 
-console.log(`\n${C.b}Now set to ${basename(best.model)}${C.r} ${C.dim}(${String(size)} MB)${C.r}`);
-if (before !== null && best.model !== current) {
-  console.log(`  ${basename(current)}: ${C.y}${secs(before)}${C.r}   →   ${basename(best.model)}: ${C.g}${secs(best.took)}${C.r} per sentence, measured here`);
+// Pinned, so the agent does not promote this machine back to a model it has
+// just been measured as unable to run in time.
+config.update({ voice: { whisperModel: out.model, modelPinned: true, mode: "fast", keepModelLoaded: true, gpu: "auto" } });
+const size = Math.round(statSync(out.model).size / 1024 / 1024);
+
+console.log(`\n${C.b}Now set to ${basename(out.model)}${C.r} ${C.dim}(${String(size)} MB)${C.r}`);
+if (out.changed && out.before !== null) {
+  console.log(`  ${basename(current)}: ${C.y}${secs(out.before)}${C.r}   →   ${basename(out.model)}: ${C.g}${secs(out.took)}${C.r} per sentence, measured here`);
 } else {
-  console.log(`  ${secs(best.took)} per sentence, measured here`);
+  console.log(`  ${secs(out.took)} per sentence, measured here`);
 }
 console.log(`  Model kept in memory: on · Fast mode: on`);
 
-if (best.step && /base|tiny/.test(best.step.file)) {
-  console.log(`\n${C.y}What this costs:${C.r} ${best.step.hebrew}. It will mishear Hebrew more often than ggml-small did.`);
+if (out.step && /base|tiny/.test(out.step.file)) {
+  console.log(`\n${C.y}What this costs:${C.r} ${out.step.hebrew}. It will mishear Hebrew more often than the model you had.`);
   console.log(`${C.dim}The wake word is unaffected — it is matched in the window itself, in about a millisecond,`);
   console.log(`and never reaches the model. To go back: npm run voice, and choose small.${C.r}`);
 }
-if (best.took > TARGET_MS) {
-  console.log(`\n${C.y}Even the fastest model needs ${secs(best.took)} on this processor.${C.r}`);
+if (out.took > TARGET_MS) {
+  console.log(`\n${C.y}Even the fastest model needs ${secs(out.took)} on this processor.${C.r}`);
   console.log(`${C.dim}That is the hardware, not a setting: whisper.cpp has no partial results to show while it works.${C.r}`);
 }
 console.log(`\nRestart JARVIS for this to take effect:  ${C.c}npm start${C.r}\n`);
