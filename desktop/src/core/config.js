@@ -47,6 +47,9 @@ const DEFAULTS = {
     keepAudio: false,
     whisperPath: "",
     whisperModel: "",
+    // Set by `npm run fast`: this model was measured on this computer and is
+    // the one to use, even though a heavier one is installed beside it.
+    modelPinned: false,
     voskModel: "",
     // fast: the smallest installed model that still does Hebrew, a single
     // decoding pass, and only as much of the encoder as the recording needs.
@@ -157,6 +160,7 @@ function sanitizePartial(partial) {
     }
     if (p.voice.mode !== undefined && !["fast", "accurate"].includes(p.voice.mode)) throw new Error('voice.mode must be "fast" or "accurate"');
     if (p.voice.keepModelLoaded !== undefined) p.voice.keepModelLoaded = !!p.voice.keepModelLoaded;
+    if (p.voice.modelPinned !== undefined) p.voice.modelPinned = !!p.voice.modelPinned;
     if (p.voice.gpu !== undefined && !["auto", "off"].includes(p.voice.gpu)) throw new Error('voice.gpu must be "auto" or "off"');
     if (p.voice.stopPhrases !== undefined) {
       if (!Array.isArray(p.voice.stopPhrases) || !p.voice.stopPhrases.length) throw new Error("At least one stop phrase is required");

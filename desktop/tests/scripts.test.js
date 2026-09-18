@@ -199,3 +199,98 @@ test("the icons are generated, square, and one per tray state", async () => {
   const distinct = new Set(states.map((s) => hash(path.join(out, `tray-${s}-32.png`))));
   assert.equal(distinct.size, states.length, "two tray states render identically");
 });
+
+test("npm run fast measures the models here, takes the fastest, and pins it", async () => {
+  // A stub engine whose delay depends on the model file: the big one is slow,
+  // the small one is quick — which is the whole question the script answers.
+  const http = require("http");
+  const os = require("os");
+  const { spawnSync } = require("child_process");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-fast-"));
+  const speech = path.join(home, "speech");
+  fs.mkdirSync(speech, { recursive: true });
+  const small = path.join(speech, "ggml-small.bin");
+  fs.writeFileSync(small, "big model");
+
+  // The model "download": a local server standing in for the model repository.
+  const body = Buffer.from("tiny model");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/octet-stream", "content-length": body.length });
+    res.end(body);
+  });
+  await new Promise((r) => { server.listen(0, "127.0.0.1", r); });
+  const base = `http://127.0.0.1:${String(server.address().port)}`;
+
+  // A stub whisper that is slow for the heavy model and quick for the light one.
+  const stub = path.join(home, "stub.mjs");
+  fs.writeFileSync(
+    stub,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const a = process.argv.slice(2);
+const model = a[a.indexOf("-m") + 1];
+const out = a[a.indexOf("-of") + 1];
+const slow = /small/.test(model);
+await new Promise((r) => setTimeout(r, slow ? 2600 : 60));
+writeFileSync(out + ".txt", "ok\\n");
+`,
+  );
+  fs.chmodSync(stub, 0o755); // a shebang script Node will only spawn when it is executable
+
+  const env = { ...process.env, JARVIS_HOME: home, JARVIS_WHISPER_MODEL_BASE: base };
+  // Point the config at the stub, the way the installer would.
+  const cfgScript = `const c = require(${JSON.stringify(path.join(ROOT, "desktop", "src", "core", "config.js"))});
+c.update({ voice: { whisperPath: ${JSON.stringify(stub)}, whisperModel: ${JSON.stringify(small)}, keepModelLoaded: false } });`;
+  spawnSync(process.execPath, ["-e", cfgScript], { env, encoding: "utf8" });
+
+  // spawnSync would block this process's event loop, and the model server above
+  // lives in it — so the "download" would never be answered. Run it async.
+  const r = await new Promise((resolve, reject) => {
+    const child = require("child_process").spawn(process.execPath, [path.join(SCRIPTS, "fast.mjs")], { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (c) => { stdout += c; });
+    child.stderr.on("data", (c) => { stderr += c; });
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`npm run fast did not finish:\n${stdout}`)); }, 120000);
+    child.on("error", reject);
+    child.on("exit", (code) => { clearTimeout(timer); resolve({ status: code, stdout, stderr }); });
+  });
+  server.close();
+  assert.equal(r.status, 0, r.stderr);
+
+  // It measured the installed model, found it too slow, fetched a smaller one
+  // and measured that too — and said both numbers.
+  assert.match(r.stdout, /measuring ggml-small\.bin/);
+  assert.match(r.stdout, /Too slow for talking to/);
+  assert.match(r.stdout, /downloading ggml-base\.bin/);
+  assert.ok(fs.existsSync(path.join(speech, "ggml-base.bin")), "the smaller model should have been downloaded");
+
+  // The choice is written down, pinned so the agent cannot promote it back to
+  // the model it just measured as too slow, with the model kept in memory.
+  const saved = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+  assert.equal(path.basename(saved.voice.whisperModel), "ggml-base.bin");
+  assert.equal(saved.voice.modelPinned, true);
+  assert.equal(saved.voice.keepModelLoaded, true);
+  assert.equal(saved.voice.mode, "fast");
+
+  // And it is honest about what the smaller model costs.
+  assert.match(r.stdout, /What this costs/);
+  assert.match(r.stdout, /wake word is unaffected/i);
+  assert.ok(!/api[_-]?key|account|subscription|\$/i.test(r.stdout), "nothing to pay for");
+});
+
+test("a pinned model is used as configured, not promoted to the heavier one beside it", () => {
+  const os = require("os");
+  const stt = require("../src/core/voice/stt.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-pin-"));
+  const tiny = path.join(dir, "ggml-tiny.bin");
+  const small = path.join(dir, "ggml-small.bin");
+  fs.writeFileSync(tiny, "t");
+  fs.writeFileSync(small, "s");
+  // Unpinned, the better model beside a weak one wins (someone who downloaded
+  // small should get it). Pinned, the measured choice stands.
+  assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny } }), [small, tiny]);
+  assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny, modelPinned: true } }), [tiny]);
+});

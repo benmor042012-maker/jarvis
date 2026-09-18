@@ -162,6 +162,8 @@ export interface Settings {
     keepAudio: boolean;
     whisperPath: string;
     whisperModel: string;
+    /** The model was measured on this computer by `npm run fast`; do not promote it. */
+    modelPinned: boolean;
     voskModel: string;
     /** fast: the quickest model installed, one pass. accurate: what is configured, full search. */
     mode: "fast" | "accurate";
