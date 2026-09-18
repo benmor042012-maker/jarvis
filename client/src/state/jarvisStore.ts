@@ -65,6 +65,16 @@ interface JarvisState {
   // this, saying the wake phrase and having it misheard looks identical to a
   // dead microphone: the screen says nothing either way.
   heard: { text: string; at: number } | null;
+  /**
+   * An utterance is with the speech engine right now. Without this the window
+   * shows nothing at all while a large model spends ten, twenty, forty seconds
+   * on one sentence — and silence is exactly how a working program looks broken.
+   */
+  transcribing: { since: number } | null;
+  /** The last engine run that was slow enough to be the reason nothing happens. */
+  slow: { ms: number; model: string | null } | null;
+  /** Utterances dropped because the one before was still being transcribed. */
+  skipped: number;
   /** The microphone stayed open and delivered nothing but silence. */
   micSilent: { device: string } | null;
   /** The inputs this browser can offer, and the one JARVIS is told to use. */
@@ -165,6 +175,9 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   listening: false,
   level: 0,
   heard: null,
+  transcribing: null,
+  slow: null,
+  skipped: 0,
   micSilent: null,
   micDevices: [],
   micDeviceId: loadMicDevice(),
@@ -418,7 +431,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       }
       return;
     }
-    set({ listening: true, micSilent: null });
+    set({ listening: true, micSilent: null, skipped: 0 });
     void get().refreshMicDevices();
     try {
       // Only the JARVIS computer itself can grant the microphone; a paired
@@ -550,6 +563,9 @@ function saveMicDevice(id: string | null): void {
   }
 }
 
+// Over this, and the wait itself is the problem, whatever the words were.
+const SLOW_MS = 8000;
+let quickRuns = 0;
 let mic: MicCapture | null = null;
 let uploading = false;
 let queued: { wav: Blob; ms: number } | null = null;
@@ -562,7 +578,10 @@ function capture(): MicCapture {
     minSpeechMs: 260,
     onSegment: (wav, ms) => {
       // One upload at a time; a newer utterance replaces a waiting one so a
-      // stop phrase is never stuck behind an old recording.
+      // stop phrase is never stuck behind an old recording. Losing the older
+      // one is the right trade and a bad surprise, so it is counted and shown:
+      // on a slow model this is why the second and third try went nowhere.
+      if (queued) useJarvis.setState((st) => ({ skipped: st.skipped + 1 }));
       queued = { wav, ms };
       void drainUploads();
     },
@@ -596,10 +615,27 @@ async function drainUploads(): Promise<void> {
     while (queued) {
       const item = queued;
       queued = null;
+      useJarvis.setState({ transcribing: { since: Date.now() } });
       try {
         const res = await api.uploadUtterance(item.wav, item.ms);
+        useJarvis.setState({ transcribing: null });
+        // Anything over this and the wait itself is the problem, whatever the
+        // words were. The threshold is generous: a second or two is normal.
+        const took = res.took_ms ?? 0;
+        const model = useJarvis.getState().voice?.engine.model ?? null;
+        if (took >= SLOW_MS) {
+          quickRuns = 0;
+          useJarvis.setState({ slow: { ms: took, model } });
+        } else if (useJarvis.getState().slow) {
+          // One quick run is not proof the machine keeps up — a short "mm" is
+          // quick on any model. Clearing the warning the instant it happens
+          // takes it off the screen exactly while it is being read.
+          quickRuns += 1;
+          if (quickRuns >= 3) useJarvis.setState({ slow: null });
+        }
         await handleUtterance(res);
       } catch (err) {
+        useJarvis.setState({ transcribing: null });
         const install = (err as AgentError & { install?: SpeechEngineInstall | null }).install ?? null;
         const s = useJarvis.getState();
         const message = err instanceof AgentError ? err.message : describeError(err);
@@ -619,6 +655,7 @@ async function drainUploads(): Promise<void> {
     }
   } finally {
     uploading = false;
+    useJarvis.setState({ transcribing: null });
   }
 }
 

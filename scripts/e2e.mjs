@@ -12,12 +12,13 @@
 //
 // Run: npm run e2e     (needs Playwright; skips with a clear message without it)
 import { createRequire } from "node:module";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { writeFakeAudio } from "./e2e/make-audio.mjs";
+import { runSync } from "./spawn-compat.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const C = { r: "\x1b[0m", g: "\x1b[32m", red: "\x1b[31m", c: "\x1b[36m", dim: "\x1b[2m" };
@@ -102,9 +103,29 @@ config.update({
 });
 
 const dist = join(ROOT, "client", "dist");
-if (!existsSync(join(dist, "index.html"))) {
-  console.error("Build the interface first:  npm run build");
-  process.exit(1);
+// Whatever was built last is what this test drives, so a source file newer than
+// the bundle means the run proves nothing about the code in front of you. That
+// cost a debugging cycle once; now it rebuilds instead.
+const newest = (dir) => {
+  let latest = 0;
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else latest = Math.max(latest, statSync(full).mtimeMs);
+    }
+  };
+  try { walk(dir); } catch { /* nothing there */ }
+  return latest;
+};
+const built = existsSync(join(dist, "index.html")) ? statSync(join(dist, "index.html")).mtimeMs : 0;
+if (!built || newest(join(ROOT, "client", "src")) > built || newest(join(ROOT, "client", "public")) > built) {
+  console.log(`${C.dim}The interface is older than its source — building it first.${C.r}`);
+  const r = runSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], { cwd: ROOT, stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error("The interface could not be built, so the browser test would be testing an old one.");
+    process.exit(1);
+  }
 }
 
 const agent = new Agent({ host: {} });
@@ -168,6 +189,24 @@ try {
   const before = agent.voice.stats.utterances;
   await until("a recording to reach the agent", () => agent.voice.stats.utterances > before, 25000);
   check("the page records and uploads what it hears", true);
+
+  // 3b. A slow engine must look like work, not like nothing. A large model on
+  //     a modest computer spends many seconds on one sentence, and an empty
+  //     screen for that long is what "it does not answer me" actually was.
+  process.env.JARVIS_STUB_DELAY_MS = "9000";
+  // "Working out what you said" also shows for a quick run, so the wait that
+  // proves anything is the one for the warning itself — which only a genuinely
+  // slow run can produce. The delay stays on until then.
+  await until("the window to say it is working", () => page.isVisible("text=Working out what you said"), 30000);
+  check("a slow engine shows as work in progress, not silence", true);
+  await until("the slow-model warning", () => page.isVisible("text=seconds to understand one sentence"), 90000);
+  const warning = (await page.textContent(".banner-warn")) || "";
+  process.env.JARVIS_STUB_DELAY_MS = "0";
+  check("and a model too slow for this computer is named, with the way out", /npm run voice/.test(warning), warning.slice(0, 200));
+  // It does not vanish the moment one quick utterance goes through, which is
+  // when someone would be reading it.
+  await until("a quick utterance after it", () => agent.voice.stats.utterances > 0, 30000);
+  check("the warning survives the next quick utterance", await page.isVisible("text=seconds to understand one sentence"));
 
   // 4. The wake phrase starts listening, with no model involved.
   say("תתעורר");
