@@ -332,3 +332,76 @@ test("the window's own detector can wake JARVIS without any transcription", asyn
   assert.equal(quiet.wakeLocally({ durationMs: 900 }).reason, "quiet_hours");
   assert.equal(quiet.state, "standby");
 });
+
+test("short Hebrew, English and mixed commands all reach the planner as spoken", async () => {
+  // Hebrew is the default, and forcing it must not mean translating: a command
+  // said in English, or half in each, has to arrive as it was said.
+  for (const sentence of ["פתח פנקס רשימות", "open notepad", "תפתח לי את ה browser"]) {
+    const s = makeSession();
+    said = "תתעורר";
+    await s.handleUtterance(wav(), { durationMs: 900 });
+    said = sentence;
+    const r = await s.handleUtterance(wav(), { durationMs: 1400 });
+    assert.equal(r.action, "command", `"${sentence}": ${JSON.stringify(r)}`);
+    assert.equal(commands.at(-1).text, sentence, "the words must reach the planner unchanged");
+  }
+});
+
+test("nothing heard, and a microphone that is muted, each say which", async () => {
+  // Silence while listening is not a command and not an error.
+  const s = makeSession();
+  said = "תתעורר";
+  await s.handleUtterance(wav(), { durationMs: 900 });
+  said = "";
+  const quiet = await s.handleUtterance(wav(), { durationMs: 900 });
+  assert.equal(quiet.action, "ignored");
+  assert.equal(quiet.reason, "nothing_heard");
+  assert.equal(commands.length, 0, "silence must never be planned");
+
+  const muted = makeSession();
+  muted.setMuted(true);
+  said = "תתעורר";
+  const r = await muted.handleUtterance(wav(), { durationMs: 900 });
+  assert.equal(r.reason, "muted");
+  assert.ok(r.detail.includes("muted"), r.detail);
+});
+
+test("a transcription that times out says so, and does not become a command", async () => {
+  const s = makeSession();
+  const real = stt.transcribe;
+  stt.transcribe = async () => { throw Object.assign(new Error("Local transcription timed out."), { status: 504 }); };
+  try {
+    await assert.rejects(() => s.handleUtterance(wav(), { durationMs: 900 }), /timed out/);
+    assert.equal(commands.length, 0);
+    assert.equal(s.lastError?.message, "Local transcription timed out.");
+  } finally {
+    stt.transcribe = real;
+  }
+});
+
+test("a missing or unreadable model is reported, with the step that fixes it", async () => {
+  const s = makeSession();
+  const real = stt.transcribe;
+  stt.transcribe = async () => {
+    throw Object.assign(new Error("No local speech engine is installed."), { status: 503, code: "speech_engine_missing", install: { what: "whisper.cpp", windows: ["download"], other: ["build"] } });
+  };
+  try {
+    await assert.rejects(() => s.handleUtterance(wav(), { durationMs: 900 }), /No local speech engine/);
+    assert.equal(s.lastError.code, "speech_engine_missing");
+    assert.ok(s.lastError.install, "the way to fix it travels with the error");
+  } finally {
+    stt.transcribe = real;
+  }
+});
+
+test("fast mode and accurate mode are both real settings, and fast is the default", () => {
+  const config = require("../src/core/config");
+  config.reset();
+  assert.equal(config.load().voice.mode, "fast", "something you talk to defaults to answering quickly");
+  assert.equal(config.load().voice.gpu, "auto");
+  assert.equal(config.update({ voice: { mode: "accurate" } }).voice.mode, "accurate");
+  assert.equal(config.update({ voice: { gpu: "off" } }).voice.gpu, "off");
+  assert.throws(() => config.update({ voice: { mode: "turbo" } }), /fast/);
+  assert.throws(() => config.update({ voice: { gpu: "on" } }), /auto/);
+  config.reset();
+});

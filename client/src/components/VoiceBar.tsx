@@ -43,6 +43,7 @@ export function VoiceBar() {
   const keyboard = useJarvis((s) => s.keyboard);
   const setKeyboard = useJarvis((s) => s.setKeyboard);
   const connection = useJarvis((s) => s.connection);
+  const creds = useJarvis((s) => s.creds);
   const emergency = useJarvis((s) => s.status?.emergency ?? false);
   const stopListening = useJarvis((s) => s.stopListening);
   const setVoicePaused = useJarvis((s) => s.setVoicePaused);
@@ -53,6 +54,8 @@ export function VoiceBar() {
   const transcribing = useJarvis((s) => s.transcribing);
   const slow = useJarvis((s) => s.slow);
   const skipped = useJarvis((s) => s.skipped);
+  const setVoiceMode = useJarvis((s) => s.setVoiceMode);
+  const mode = voice?.engine.speed?.mode ?? "fast";
   const micDevices = useJarvis((s) => s.micDevices);
   const micDeviceId = useJarvis((s) => s.micDeviceId);
   const setMicDevice = useJarvis((s) => s.setMicDevice);
@@ -181,6 +184,16 @@ export function VoiceBar() {
           )}
           <button type="button" className="btn btn-danger" onClick={act(() => emergencyStop())} disabled={busy || !online} title="Stop every running action immediately">
             Emergency stop
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            aria-pressed={mode === "fast"}
+            title={mode === "fast" ? "Fast: the quickest model installed, one pass" : "Accurate: the model you chose, full search"}
+            onClick={act(() => setVoiceMode(mode === "fast" ? "accurate" : "fast"))}
+            disabled={busy || !online || !(creds?.role === "owner")}
+          >
+            {mode === "fast" ? "Fast mode" : "Accurate mode"}
           </button>
           <button type="button" className="btn btn-ghost" aria-pressed={keyboard} onClick={() => { setKeyboard(!keyboard); }}>
             {keyboard ? "Hide keyboard" : "Use keyboard instead"}
