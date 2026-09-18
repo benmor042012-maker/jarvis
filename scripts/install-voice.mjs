@@ -45,10 +45,16 @@ const MODEL_BASE = process.env.JARVIS_WHISPER_MODEL_BASE ?? "https://huggingface
 
 // Models, largest first. A model without ".en" in its name is multilingual and
 // understands Hebrew; the ".en" builds cannot, at any size.
+// Ordered as they are offered, and the first that fits the machine is the
+// recommendation. It is the fast one on purpose: an assistant that answers in a
+// second and mishears a word now and then is usable, and one that is right
+// every time in fifteen seconds is not. The wake phrase does not depend on this
+// at all once it has been taught in the window — that runs in a millisecond and
+// never reaches the model.
 const MODELS = [
-  { id: "turbo", file: "ggml-large-v3-turbo.bin", mb: 1624, needsGb: 8, why: "by far the best Hebrew, and still fast — the one to take" },
-  { id: "medium", file: "ggml-medium.bin", mb: 1533, needsGb: 16, why: "accurate Hebrew, slower than turbo" },
-  { id: "small", file: "ggml-small.bin", mb: 466, needsGb: 8, why: "understands Hebrew, but mishears it often" },
+  { id: "small", file: "ggml-small.bin", mb: 466, needsGb: 8, why: "answers in about a second — the one to take for talking" },
+  { id: "turbo", file: "ggml-large-v3-turbo.bin", mb: 1624, needsGb: 8, why: "the best Hebrew there is, but several seconds a sentence on an ordinary PC" },
+  { id: "medium", file: "ggml-medium.bin", mb: 1533, needsGb: 16, why: "accurate, and slower still" },
   { id: "base", file: "ggml-base.bin", mb: 148, needsGb: 4, why: "quick, and wrong on Hebrew more often than not" },
   { id: "tiny", file: "ggml-tiny.bin", mb: 75, needsGb: 2, why: "fastest and least accurate — for trying it out" },
 ];
@@ -56,7 +62,10 @@ const MODELS = [
 // Measured on this project's own wake phrase: "תתעורר" came back from the small
 // model as "תפקות". Hebrew is where the smaller models fall down, so anything
 // below turbo/medium is offered as an upgrade rather than left in place.
-const WEAK_HEBREW = new Set(["ggml-small.bin", "ggml-base.bin", "ggml-tiny.bin"]);
+// Genuinely too poor for Hebrew, whatever the speed. small is deliberately not
+// in here: the word it drops now and then is what near-miss matching absorbs,
+// and it is what makes an answer arrive while you are still listening for it.
+const WEAK_HEBREW = new Set(["ggml-base.bin", "ggml-tiny.bin"]);
 
 const GB = 1024 ** 3;
 
@@ -243,15 +252,23 @@ try {
   }
 
   // 2. The model.
-  const already = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).find((f) => fs.existsSync(f) && looksLikeModel(f));
+  //
+  // What is already configured wins over what is merely present: with several
+  // models installed, re-running this must not quietly move someone who chose
+  // accuracy onto the fast one, any more than the other way round.
+  const configured = (() => {
+    const p = config.load()?.voice?.whisperModel;
+    return p && fs.existsSync(p) && looksLikeModel(p) ? p : null;
+  })();
+  const already = configured ?? MODELS.map((m) => path.join(SPEECH_DIR, m.file)).find((f) => fs.existsSync(f) && looksLikeModel(f));
   let modelFile = already ?? null;
   if (modelFile && WEAK_HEBREW.has(path.basename(modelFile))) {
     // Saying "already here" and stopping is how someone ends up with a model
     // that hears "תפקות" when they say "תתעורר", with nothing suggesting the
     // fix. Offer the better one; keeping what is there stays one Enter away.
-    warn(`The model here is ${path.basename(modelFile)}, which mishears Hebrew.`);
+    warn(`The model here is ${path.basename(modelFile)}, which gets Hebrew wrong more often than not.`);
     const best = MODELS.find((m) => m.needsGb <= ramGb) ?? MODELS[0];
-    const answer = (await ask(rl, `  Download ${best.file} instead (about ${String(best.mb)} MB, much better Hebrew)? [Y/n] `)).trim().toLowerCase();
+    const answer = (await ask(rl, `  Download ${best.file} instead (about ${String(best.mb)} MB, far better Hebrew at about a second a sentence)? [Y/n] `)).trim().toLowerCase();
     if (answer === "" || answer === "y" || answer === "yes") {
       const dest = path.join(SPEECH_DIR, best.file);
       say(`Downloading ${best.file} (about ${String(best.mb)} MB). This is the long part.`);
@@ -270,7 +287,25 @@ try {
       ok(`Keeping ${path.basename(modelFile)}.`);
     }
   } else if (modelFile) {
-    ok(`A speech model is already here: ${path.basename(modelFile)}`);
+    ok(`A speech model is already here: ${path.basename(modelFile)}${configured ? " (the one JARVIS is set to use)" : ""}`);
+    const others = MODELS.map((m) => path.join(SPEECH_DIR, m.file)).filter((f) => f !== modelFile && fs.existsSync(f) && looksLikeModel(f));
+    if (others.length) {
+      // Several are installed, so this is a choice, not a fact: switching
+      // between them should not mean deleting a 1.6 GB download.
+      console.log(`\n  Also installed here:`);
+      for (const f of [modelFile, ...others]) {
+        const m = MODELS.find((x) => x.file === path.basename(f));
+        const mark = f === modelFile ? `${C.g}→${C.r}` : " ";
+        console.log(`  ${mark} ${C.b}${(m?.id ?? path.basename(f)).padEnd(7)}${C.r} ${C.dim}${m?.why ?? ""}${C.r}`);
+      }
+      const want = (await ask(rl, `\n  Which should JARVIS use? [${MODELS.find((x) => x.file === path.basename(modelFile))?.id ?? "keep"}] `)).trim().toLowerCase();
+      const picked = MODELS.find((m) => m.id === want);
+      const pickedFile = picked ? path.join(SPEECH_DIR, picked.file) : null;
+      if (pickedFile && fs.existsSync(pickedFile) && looksLikeModel(pickedFile)) {
+        modelFile = pickedFile;
+        ok(`JARVIS will use ${path.basename(modelFile)}.`);
+      }
+    }
   } else {
     const fits = MODELS.filter((m) => m.needsGb <= ramGb);
     const suggested = fits[0] ?? MODELS[MODELS.length - 1];
@@ -324,6 +359,7 @@ try {
 } catch (e) {
   bad(e.message);
   console.log(`\n  ${C.dim}Nothing was left half-installed: the engine and the model are each kept only once they arrive complete.${C.r}`);
+  if (WIN) console.log(`  ${C.dim}Hebrew looks scrambled in this console window — that is the window, not JARVIS. It is correct inside the app.${C.r}`);
   manualSteps();
   exitCode = 1;
 } finally {

@@ -47,9 +47,10 @@ npm run voice
 מנוע הדיבור עובד רק על הפקודה עצמה. ההקלטות לא יוצאות מהמחשב ולא נשמרות כקול: נשמרים כמה מאות
 מספרים שמתארים את צורת הצליל.
 
-**לעברית — קחו את המודל `turbo` (1.6 ג'יגה, חינם).** המודלים הקטנים "מבינים עברית" על הנייר
-ובפועל מפספסים מילים: על מחשב אמיתי "תתעורר" חזר מ-`small` בתור "תפקות". אם כבר מותקן מודל קטן,
-ההתקנה מציעה להחליף אותו, והקובץ הישן נשאר במקומו עד שתמחקו אותו.
+**לדיבור — קחו את `small` (466 מגה, חינם).** הוא עונה בערך בשנייה, וזה מה שהופך את זה לשיחה.
+`turbo` מדייק יותר, אבל לוקח כמה שניות למשפט על מחשב רגיל — קחו אותו רק אם דיוק חשוב לכם יותר
+ממהירות. אם המודל שמותקן איטי מדי כאן, ג'רביס עובר לבד למודל המהיר יותר שכבר קיים אצלכם ואומר
+שהוא עשה את זה. `base` ו-`tiny` פשוט טועים בעברית, וההתקנה מציעה להחליף אותם.
 
 | מצב | מה מותר |
 |---|---|
@@ -246,10 +247,12 @@ Export or delete all of it from **Activity log → Export my data / Delete local
   Without it, everything still works; waking just waits for the engine.
 - **Voice needs a speech engine installed on the computer.** `npm run voice` (or a double-click on
   `INSTALL-VOICE.bat`) fetches it and a multilingual model for you, then asks JARVIS whether it can
-  actually hear you before saying it is ready. For Hebrew, take the `turbo` model it recommends: the
-  smaller ones are multilingual on paper and mishear the words in practice — on a real machine
-  "תתעורר" came back from `ggml-small` as "תפקות". An already-installed small model is offered the
-  upgrade rather than left in place, and the old file is kept until you delete it. Without one nothing is transcribed, and JARVIS names
+  actually hear you before saying it is ready. It recommends `small`, which answers in about a
+  second: for talking to, a model that is right every time in fifteen seconds is worse than one that
+  mishears a word now and then and keeps up. `turbo` is offered for accuracy, and `base`/`tiny` are
+  offered the upgrade because they get Hebrew wrong outright. If the installed model turns out to be
+  too slow on this computer, JARVIS moves to the fastest one already installed beside it and says so
+  — it never downloads or deletes anything on its own. Without one nothing is transcribed, and JARVIS names
   the missing component and the exact free steps rather than guessing at what you said. An
   English-only model (`*.en.bin`) is refused for Hebrew with that reason.
 - **Speaking out loud uses the voices installed in Windows.** Chrome also offers voices that are
