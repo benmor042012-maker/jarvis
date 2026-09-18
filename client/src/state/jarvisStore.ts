@@ -652,7 +652,10 @@ let levelAt = 0;
 function capture(): MicCapture {
   mic ??= new MicCapture({
     maxSegmentMs: 15000,
-    silenceMs: 900,
+    // How long a pause ends a sentence. Every millisecond here is a millisecond
+    // of waiting after you stop talking, before anything at all begins — so it
+    // is as short as it can be without cutting people off mid-thought.
+    silenceMs: 550,
     minSpeechMs: 260,
     onSegment: (wav, ms, samples) => {
       if (enrolling) {
