@@ -336,13 +336,22 @@ function tempWavPath() {
  * would otherwise need cannot be spawned on Windows at all.
  */
 function whisperArgs({ model, file, language, mode = "fast", gpu = "auto", seconds = 0 }) {
-  // Accurate mode always searches; fast mode only does so on a small model,
-  // where the search is cheap and the model needs the help. On a large model in
-  // fast mode it multiplies the slowest part of the run, on exactly the
-  // computers that can least afford it.
-  const big = /large|medium/i.test(path.basename(model));
-  const beam = mode === "accurate" ? "5" : big ? "1" : "5";
+  // Accurate mode searches. Fast mode takes the first guess, on every model.
+  //
+  // Beam search decodes the sentence five times over and keeps the best. On a
+  // current machine that is affordable; on a modest one it is most of the wait.
+  // Measured on a four-core PC with these flags as they were: ggml-base took
+  // 66 seconds a sentence and ggml-small 43 — the smaller model slower than the
+  // bigger one, which is the signature of the decoder doing far more work than
+  // the audio justifies, not of a slow processor.
+  const beam = mode === "accurate" ? "5" : "1";
   const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", String(file).replace(/\.wav$/, ""), "-np", "-nt", "-bs", beam, "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+  // The other half of that measurement: when whisper is unsure — which it
+  // always is about a half-second command, a cough or a noisy room — it decodes
+  // the same audio again at a higher temperature, up to six times, before
+  // giving up. It is the difference between "unsure quickly" and "unsure in a
+  // minute". Fast mode takes the first answer; accurate mode keeps the retries.
+  if (mode !== "accurate") args.push("-nf");
   // The engine uses a GPU when the build has support and the machine has one,
   // and falls back to the CPU by itself when either is missing. -ng is the only
   // lever there is: it forces the CPU.
