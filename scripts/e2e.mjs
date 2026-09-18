@@ -72,7 +72,12 @@ const home = mkdtempSync(join(tmpdir(), "jarvis-e2e-"));
 process.env.JARVIS_HOME = home;
 mkdirSync(join(home, "speech"), { recursive: true });
 const modelFile = join(home, "speech", "ggml-small.bin");
-writeFileSync(modelFile, "stub model");
+// A file the agent will accept as a model: the GGML marker and a realistic
+// size. Anything smaller is refused now, and rightly — a ten-byte "model" is
+// what a failed download leaves behind.
+const stubModel = Buffer.alloc(1024 * 1024 + 16);
+stubModel.write("ggml", 0, "ascii");
+writeFileSync(modelFile, stubModel);
 const sayFile = join(home, "stub-say.txt");
 writeFileSync(sayFile, "");
 const audioFile = join(home, "fake-mic.wav");
