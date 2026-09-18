@@ -198,7 +198,8 @@ test("the flags follow the mode, and the processor is used when asked", () => {
   assert.ok(fast.includes("-ac"), "fast mode trims the encoder to the length of the recording");
   assert.ok(Number(after(fast, "-ac")) < 1500, after(fast, "-ac"));
   assert.ok(!fast.includes("-ng"), "the graphics card is left to the engine by default");
-  assert.equal(after(fast, "-bs"), "5", "a small model gets the search: it is cheap there and it needs it");
+  assert.equal(after(fast, "-bs"), "1", "fast mode takes the first guess rather than decoding five times over");
+  assert.ok(fast.includes("-nf"), "and does not re-decode the same audio at rising temperatures when it is unsure");
 
   // The same mode on a large model drops the search instead: there it costs
   // the seconds that made JARVIS unusable.
@@ -207,6 +208,7 @@ test("the flags follow the mode, and the processor is used when asked", () => {
   const accurate = args({ mode: "accurate", model: "/s/ggml-large-v3-turbo.bin" });
   assert.ok(!accurate.includes("-ac"), "accurate mode keeps the whole window");
   assert.equal(after(accurate, "-bs"), "5", "and searches rather than taking the first guess");
+  assert.ok(!accurate.includes("-nf"), "accurate mode keeps the retries that make it accurate");
 
   assert.ok(args({ mode: "fast", gpu: "off" }).includes("-ng"), "processor-only means processor-only");
 
