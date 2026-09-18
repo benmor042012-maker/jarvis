@@ -8,7 +8,7 @@ const EventEmitter = require("events");
 
 const audit = require("../audit");
 const stt = require("./stt");
-const { matchAny, normalize, stripPhrase, words } = require("./phrases");
+const { matchAny, matchClose, normalize, stripPhrase, words } = require("./phrases");
 
 const STATES = ["unavailable", "permission_required", "off", "standby", "listening", "thinking", "speaking", "paused", "muted", "quiet_hours"];
 
@@ -212,7 +212,12 @@ class VoiceSession extends EventEmitter {
 
     // 2. Standby: only a wake phrase matters.
     if (!listening) {
-      const phrase = matchAny(text, v.wakePhrases || []);
+      // Near misses count: a local model transcribing one short Hebrew word
+      // drops a letter often, and "תתעור" for "תתעורר" is the person calling
+      // JARVIS, not someone else talking. How near is decided in phrases.js;
+      // the false-wake rules below still apply to every wake, near or exact.
+      const close = matchClose(text, v.wakePhrases || []);
+      const phrase = close?.phrase ?? null;
       if (!phrase) {
         this._set("standby", "not_for_jarvis");
         this._remember({ kind: "ignored", text });
@@ -239,12 +244,12 @@ class VoiceSession extends EventEmitter {
       this.stats.wakes++;
       this.listeningUntil = Date.now() + (v.maxListenMs || 15000);
       this._set("listening", "wake");
-      audit.log({ event: "voice_wake", device: device?.name, detail: { phrase, source } });
-      this._remember({ kind: "wake", text, phrase });
+      audit.log({ event: "voice_wake", device: device?.name, detail: { phrase, source, heard: text, near: close.distance } });
+      this._remember({ kind: "wake", text, phrase, near: close.distance });
       this.emit("event", { type: "voice", event: "woke", phrase, until: this.listeningUntil });
 
       // "תתעורר פתח פנקס רשימות" — the command rode along with the wake phrase.
-      const rest = stripPhrase(text, phrase);
+      const rest = stripPhrase(text, phrase, { near: close.distance });
       if (rest && words(rest).length >= 1) return this._runCommand(rest, { device, source, viaWake: true });
       return { action: "woke", phrase, listening_until: this.listeningUntil, text };
     }

@@ -113,6 +113,12 @@ async function voskAvailable(cfg) {
   return { available: !!binding, dir, binding: !!binding };
 }
 
+// Initial prompts, per language: ordinary sentences, no command words.
+const PROMPTS = {
+  he: "שלום. זו הקלטה קצרה בעברית של משפט אחד.",
+  en: "Hello. This is a short recording of one sentence in English.",
+};
+
 const INSTALL_STEPS = {
   whisper: {
     what: "whisper.cpp (a free, open-source speech engine that runs on your computer)",
@@ -241,6 +247,13 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       // little time per utterance and is the difference between a Hebrew word
       // coming back right and coming back as something that rhymes with it.
       const args = ["-m", d.model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      // A one-word clip gives the model almost nothing to go on, and it will
+      // guess at the language and the spelling. A plain sentence in the target
+      // language as the initial prompt settles both. The wake phrase itself is
+      // deliberately NOT in here: whisper repeats its prompt when the audio is
+      // unclear, which would turn every cough into a wake word.
+      const hint = PROMPTS[(language || "").slice(0, 2)];
+      if (hint) args.push("--prompt", hint);
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
       if (res.timedOut) throw Object.assign(new Error("Local transcription timed out."), { status: 504 });
