@@ -111,3 +111,21 @@ test("closing the window leaves the agent running in the tray", () => {
   // And the tray says so the first time, so nobody thinks JARVIS is gone.
   assert.match(main, /JARVIS keeps running/);
 });
+
+test("the window keeps hearing in the tray, and the wake word can raise it", () => {
+  // The microphone and the wake-word detector live in the window. Chromium
+  // slows a hidden window to a crawl, so without this JARVIS stops hearing the
+  // moment it is closed to the tray — which is when a wake word matters most.
+  const main = fs.readFileSync(path.join(ROOT, "main.js"), "utf8");
+  assert.match(main, /backgroundThrottling:\s*false/, "a hidden window must keep running the audio");
+
+  // Raising the window is something the page can ask for, and the only thing:
+  // no arguments, so there is nothing for a compromised page to aim it at.
+  assert.match(main, /ipcMain\.handle\("show-window"/, "the desktop must offer it");
+  const preload = fs.readFileSync(path.join(ROOT, "preload.js"), "utf8");
+  assert.match(preload, /showWindow:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("show-window"\)/, "and the page must reach it with no arguments");
+
+  // And the page actually uses it when it wakes.
+  const store = fs.readFileSync(path.join(ROOT, "..", "client", "src", "state", "jarvisStore.ts"), "utf8");
+  assert.match(store, /showWindow\?\.\(\)/, "a wake in the tray must bring JARVIS up");
+});

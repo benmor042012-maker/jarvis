@@ -26,6 +26,8 @@ interface DesktopBridge {
   getOwnerDevice: () => Promise<DeviceCreds>;
   getAgentInfo: () => Promise<{ port: number; platform: string; version: string }>;
   openPath: (p: string) => Promise<{ ok: boolean; reason: string | null }>;
+  /** Bring the JARVIS window up from the tray. */
+  showWindow?: () => Promise<boolean>;
   /** The desktop agent asks the window to play the alert sound. */
   onAlertSound?: (cb: () => void) => () => void;
   /** The desktop agent asks the window to speak, using local Windows voices. */
@@ -762,6 +764,9 @@ async function localWake(ms: number, distance: number): Promise<void> {
   try {
     const res = await api.voiceWake(ms, distance);
     if (res.action === "woke") {
+      // Said into a window that is in the tray, "תתעורר" has to bring JARVIS
+      // up — otherwise it wakes somewhere nobody can see.
+      void desktopBridge()?.showWindow?.().catch(() => undefined);
       wakeSound();
       useJarvis.setState({ voice: res.status, heard: null });
       s.setOrb("listening");

@@ -114,7 +114,17 @@ function createWindow() {
     icon: path.join(__dirname, "assets", "icon.png"),
     autoHideMenuBar: true,
     show: !process.argv.includes("--hidden"),
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // Chromium slows a hidden window down to a crawl, and the microphone and
+      // the wake-word detector live in that window. Without this, closing
+      // JARVIS to the tray means it stops hearing you — which is the one thing
+      // a wake word must never do.
+      backgroundThrottling: false,
+    },
   });
   mainWindow.loadURL(`http://127.0.0.1:${serverInfo.port}/`);
   mainWindow.on("close", (e) => {
@@ -313,6 +323,14 @@ ipcMain.handle("owner-device", () => {
   return { id: d.id, secret: d.secret, name: d.name, role: d.role };
 });
 ipcMain.handle("agent-info", () => ({ port: serverInfo?.port, platform: process.platform, version: agent?.version, hotkey: agent?.hotkeyInfo }));
+// The wake word was heard while JARVIS was in the tray. Bringing the window up
+// is the whole point of saying it: the page cannot raise itself, and this is
+// the only thing it may ask for — no arguments, nothing to get wrong.
+ipcMain.handle("show-window", () => {
+  showWindow();
+  return true;
+});
+
 ipcMain.handle("open-path", async (_e, p) => {
   const cfg = config.load();
   const corePaths = require("./src/core/paths");
