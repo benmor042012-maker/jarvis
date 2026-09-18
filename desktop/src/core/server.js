@@ -93,6 +93,13 @@ class Server {
     r("tools/policy", async ({ params, device }) => ({ tools: A.setToolPolicy(String(params.tool || ""), String(params.policy || ""), device) }), { owner: true });
     r("apps/list", async () => ({ apps: require("./tools/apps").catalog(A.cfg()) }));
     r("ai/detect", async ({ params }) => A.aiStatus(!!params.force));
+    // Read-only numbers for the Command Center: battery, disk, memory, uptime.
+    // The same tool a spoken "מצב המחשב" runs, without a plan in the way.
+    r("system/status", async () => {
+      const tool = A.registry.get("system_status");
+      const out = await tool.run({}, { cfg: A.cfg(), signal: new AbortController().signal });
+      return out.data;
+    });
 
     r("devices/list", async () => ({ devices: A.devices.list() }));
     r("devices/pair-code", async ({ device }) => { const c = A.devices.createPairCode(); audit.log({ event: "pair_code_created", device: device.name }); return { ...c, urls: A.lanUrls() }; }, { owner: true });

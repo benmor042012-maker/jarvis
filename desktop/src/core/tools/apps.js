@@ -128,4 +128,4 @@ const open_file = {
   },
 };
 
-module.exports = { tools: [open_app, close_app, open_url, open_file], catalog, resolveApp, validateUrl, BUILTIN };
+module.exports = { tools: [open_app, close_app, open_url, open_file], catalog, resolveApp, validateUrl, openWithDefault, BUILTIN };

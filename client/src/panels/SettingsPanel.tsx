@@ -357,6 +357,22 @@ export function SettingsPanel() {
               <input value={(form.drafts ?? settings.drafts).businessName} onChange={(e) => { setForm({ ...form, drafts: { ...(form.drafts ?? settings.drafts), businessName: e.target.value } }); }} />
             </label>
             <label className="field">
+              <span>Contacts — one per line: name, phone. Kept only on this computer; "שלח וואטסאפ ל&lt;שם&gt; ש…" opens the chat with the message typed and you press Send</span>
+              <textarea
+                rows={4}
+                dir="auto"
+                value={(form.contacts ?? settings.contacts).map((c) => `${c.name}, ${c.phone}`).join("\n")}
+                onChange={(e) => {
+                  const contacts = e.target.value.split("\n").map((line) => {
+                    const i = line.indexOf(",");
+                    return i < 0 ? { name: line.trim(), phone: "" } : { name: line.slice(0, i).trim(), phone: line.slice(i + 1).trim() };
+                  });
+                  setForm({ ...form, contacts });
+                }}
+                placeholder={"אמא, 050-123-4567\nDana, +972 52 000 0000"}
+              />
+            </label>
+            <label className="field">
               <span>Keep activity log for (days)</span>
               <input type="number" min={1} max={365} value={(form.privacy ?? settings.privacy).keepAuditDays} onChange={(e) => { setForm({ ...form, privacy: { keepAuditDays: Number(e.target.value) } }); }} />
             </label>

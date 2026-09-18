@@ -47,6 +47,16 @@ npm run voice
 מנוע הדיבור עובד רק על הפקודה עצמה. ההקלטות לא יוצאות מהמחשב ולא נשמרות כקול: נשמרים כמה מאות
 מספרים שמתארים את צורת הצליל.
 
+**וואטסאפ:** "שלח וואטסאפ לאמא שאני מאחר" — ג'רביס פותח את הצ'אט הנכון עם ההודעה כבר כתובה,
+ואתה לוחץ שלח. שמות ומספרים: **Settings → Contacts**. זה הדבר היחיד שוואטסאפ מאפשרת בחינם
+ובאופן רשמי; ג'רביס לא שולח בעצמו ולא טוען ששלח.
+
+**מסך Command Center:** במסך רחב, סביב הכדור יש לוחות עם מספרים אמיתיים מהמחשב — המוח שרץ,
+המודל שבזיכרון, זיכרון ודיסק, פקודות מהירות. *Focus mode* משאיר רק את הכדור.
+
+**עולה עם Windows:** ברירת המחדל עכשיו היא שג'רביס עולה עם המחשב, מוסתר במגש, כך ש"תתעורר"
+עובד גם בלי לפתוח אותו. מכבים בתפריט המגש או ב-Settings.
+
 **שיחה רציפה:** אחרי שג'רביס עונה, הוא ממשיך להקשיב עוד כמה שניות — אפשר להמשיך לדבר בלי
 להגיד "תתעורר" שוב. "עצור", "תעצור", "חירום", השתקה, השהיה ושעות שקט סוגרים את החלון הזה מייד,
 והוא נסגר לבד אחרי הזמן שנקבע. אפשר לכבות או לשנות: **Settings → Voice**.
@@ -284,6 +294,16 @@ Export or delete all of it from **Activity log → Export my data / Delete local
   the sound in the page itself (MFCC features, dynamic time warping) in about a millisecond — no
   model, no download, no network. The tolerance comes from how much your own three recordings differ.
   Without it, everything still works; waking just waits for the engine.
+- **WhatsApp without a provider.** "שלח וואטסאפ לאמא שאני מאחר" opens the chat with the message
+  typed, through WhatsApp's own free `wa.me` link, and *you* press Send. Names live in Settings →
+  Contacts, on this computer only, and are never read aloud or logged. There is no free official
+  way for a program to send a WhatsApp message on your behalf (the Business API is paid; driving
+  WhatsApp Web from outside is against its terms), so JARVIS does not pretend to.
+- **The Command Center.** On a wide screen the orb sits between live panels: which brain is
+  answering (or MOCK MODE), which speech model is loaded and whether it is in memory, tools,
+  devices, memory and disk read from Windows every 30 seconds, quick commands. Every figure is
+  real; *Focus mode* hides the panels.
+- **Starts with Windows by default**, hidden in the tray, so the wake word works from a cold boot.
 - **A conversation, not a series of commands.** When JARVIS finishes answering, the listening
   window reopens for a few seconds (`voice.followUpMs`, eight by default), so the next sentence
   does not need the wake word again. Nothing is relaxed to do it: a stop phrase, the emergency

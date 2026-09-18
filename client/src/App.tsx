@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { ActivityLog } from "./components/ActivityLog";
 import { AlertScreen } from "./components/AlertScreen";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { CallScreen } from "./components/CallScreen";
+import { CommandCenterLeft, CommandCenterRight } from "./components/CommandCenter";
+import { loadLayout, saveLayout } from "./lib/layout";
 import { Header } from "./components/Header";
 import { JarvisOrb } from "./components/JarvisOrb";
 import { PairingScreen } from "./components/PairingScreen";
@@ -33,6 +35,8 @@ export default function App() {
   const approvalOpen = useJarvis((s) => s.approvalOpen);
   const openApproval = useJarvis((s) => s.openApproval);
   const reconnectIn = useJarvis((s) => s.reconnectIn);
+  const [layout, setLayout] = useState<"center" | "focus">(() => loadLayout());
+  const switchLayout = (next: "center" | "focus") => { saveLayout(next); setLayout(next); };
 
   useDesktopHost();
 
@@ -55,10 +59,16 @@ export default function App() {
             : lastMessage?.text;
 
   return (
-    <div className="app">
+    <div className={layout === "center" ? "app app-cc" : "app"}>
       <div className="grid-field" aria-hidden="true" />
       <Header />
+      {layout === "center" && <CommandCenterLeft />}
       <main className="stage" aria-label="Assistant">
+        {layout === "focus" && (
+          <button type="button" className="btn btn-ghost cc-toggle" onClick={() => { switchLayout("center"); }} title="Show the Command Center panels">
+            Command Center
+          </button>
+        )}
         <JarvisOrb state={orb} statusText={statusText} {...(subtext ? { subtext } : {})} />
         {pending.length > 0 && !approvalOpen && (
           <button type="button" className="btn btn-primary" onClick={() => { openApproval(pending[0]?.plan_id ?? null); }}>
@@ -66,6 +76,7 @@ export default function App() {
           </button>
         )}
       </main>
+      {layout === "center" && <CommandCenterRight onFocus={() => { switchLayout("focus"); }} />}
       <ActivityLog />
       <VoiceBar />
       <ApprovalDialog />

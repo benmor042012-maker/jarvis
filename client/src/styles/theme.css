@@ -1531,3 +1531,113 @@ textarea {
     flex: 1 1 auto;
   }
 }
+
+/* --- Command Center ---------------------------------------------------------
+   Side panels around the orb on a wide screen. Every figure is live and local;
+   the layout is the only thing borrowed from the films. */
+.app-cc {
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(240px, 300px) minmax(0, 320px);
+  grid-template-areas:
+    "header header header header"
+    "left stage right log"
+    "command command command log";
+}
+.cc-col {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 12px;
+  min-height: 0;
+  overflow: auto;
+  z-index: 1;
+}
+.cc-right {
+  grid-area: right;
+}
+.cc-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  padding: 12px 14px;
+  box-shadow: inset 0 0 0 1px rgba(22, 217, 255, 0.05), 0 8px 30px rgba(3, 11, 24, 0.5);
+}
+.cc-panel h3 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+.cc-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.cc-rows li {
+  display: grid;
+  grid-template-columns: 8px 1fr;
+  grid-template-areas: "dot k" ". v";
+  column-gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(11, 46, 82, 0.35);
+  border: 1px solid rgba(138, 168, 255, 0.1);
+}
+.cc-dot {
+  grid-area: dot;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.cc-rows li[data-state="warn"] .cc-dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+.cc-rows li[data-state="off"] .cc-dot { background: var(--dim); box-shadow: none; }
+.cc-k { grid-area: k; font-size: 13px; font-weight: 600; }
+.cc-v { grid-area: v; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.cc-rings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.cc-ring { display: grid; justify-items: center; gap: 2px; text-align: center; }
+.cc-ring svg { width: 64px; height: 64px; }
+.cc-ring-track { fill: none; stroke: rgba(138, 168, 255, 0.15); stroke-width: 5; }
+.cc-ring-fill { fill: none; stroke: var(--cyan); stroke-width: 5; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(22, 217, 255, 0.6)); transition: stroke-dasharray 600ms ease; }
+.cc-ring-text { fill: var(--white); font-size: 13px; font-weight: 700; font-family: var(--font-display); }
+.cc-ring-label { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cc-ring-detail { font-size: 11px; color: var(--dim); }
+.cc-foot { margin: 10px 0 0; font-size: 11px; color: var(--dim); }
+.cc-clock { text-align: center; padding: 6px 0 2px; }
+.cc-time {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+  text-shadow: 0 0 18px rgba(22, 217, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+.cc-date { display: block; font-size: 12px; color: var(--muted); }
+.cc-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cc-quick .btn { justify-content: center; font-size: 12px; padding: 8px 6px; }
+.cc-focus { margin-top: auto; align-self: center; font-size: 12px; }
+.cc-toggle { position: absolute; top: 10px; right: 10px; font-size: 12px; z-index: 2; }
+@media (max-width: 1180px) {
+  .app-cc {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
+    grid-template-areas:
+      "header header"
+      "stage log"
+      "command log";
+  }
+  .app-cc .cc-col { display: none; }
+}

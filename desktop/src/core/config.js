@@ -9,7 +9,9 @@ const DEFAULTS = {
   version: 2,
   mode: "assistant",
   language: "he",
-  autoStart: false,
+  // Start with Windows, hidden in the tray, so "תתעורר" works from a cold
+  // boot without anyone opening JARVIS first. The tray menu switches it off.
+  autoStart: true,
   hotkeys: { emergencyStop: "CommandOrControl+Shift+Escape" },
   server: { port: 8765, lanEnabled: false },
   offlineMode: false,
@@ -85,6 +87,9 @@ const DEFAULTS = {
     allowDialer: true,
   },
   drafts: { senderName: "", businessName: "" },
+  // People JARVIS may open a WhatsApp chat with, by name. Kept only in this
+  // file on this computer; numbers are never read aloud or logged.
+  contacts: [], // [{ name, phone }]
   deviceExpiryDays: 30,
   privacy: { keepAuditDays: 90 },
   // Remote access from a phone. Off by default: enabling it is the one setting
@@ -179,6 +184,13 @@ function sanitizePartial(partial) {
       const q = p.voice[key];
       if (q && (q.start !== undefined || q.end !== undefined)) validateQuietHours(q, `voice.${key}`);
     }
+  }
+  if (p.contacts !== undefined) {
+    if (!Array.isArray(p.contacts)) throw new Error("contacts must be a list");
+    p.contacts = p.contacts
+      .map((c) => ({ name: String(c?.name ?? "").trim().slice(0, 80), phone: String(c?.phone ?? "").trim().slice(0, 32) }))
+      .filter((c) => c.name && c.phone);
+    for (const c of p.contacts) if (!/^[+\d][\d\s().-]{6,}$/.test(c.phone)) throw new Error(`"${c.phone}" for ${c.name} does not look like a phone number`);
   }
   if (p.tts?.voice !== undefined) {
     if (typeof p.tts.voice !== "string" || p.tts.voice.length > 120) throw new Error("tts.voice must be the name of a voice installed on this computer");

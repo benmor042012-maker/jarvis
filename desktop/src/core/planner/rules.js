@@ -87,6 +87,12 @@ function rulePlan(input, ctx = {}) {
   if ((m = text.match(/^(?:note|jot down|write down|remember to write|רשום לי|תרשום|כתוב לי ביומן|רשום)\s+(?:that\s+|ש)?([\s\S]{2,})$/i))) return plan(he ? "רשמתי." : "Written down.", [{ tool: "note_add", params: { text: q(m[1]) } }]);
   if (/^(?:my notes|today'?s notes|what did i write|מה רשמתי|הפתקים שלי|מה כתבתי היום)\??$/i.test(text.trim())) return plan(he ? "הפתקים של היום." : "Today's notes.", [{ tool: "notes_today", params: {} }]);
 
+  // WhatsApp: opens the chat with the message typed; the person presses Send.
+  if ((m = text.match(/^(?:send|write|text|message|שלח|תשלח|כתוב|תכתוב|תשלחי?)\s+(?:a\s+)?(?:whatsapp|וואטסאפ|ווצאפ|וטסאפ|הודעה בוואטסאפ|הודעה)\s*(?:message\s+)?(?:to\s+|ל-?)\s*(.+?)\s*(?::|,|that says|saying|with|שכתוב|תכתוב|ש)\s*([\s\S]{1,2000})$/i))) {
+    return plan(he ? `פותח וואטסאפ ל${q(m[1])} עם ההודעה מוכנה. אתה לוחץ שלח.` : `Opening WhatsApp to ${q(m[1])} with the message typed. You press Send.`, [{ tool: "open_chat_draft", params: { to: q(m[1]), text: q(m[2]) } }]);
+  }
+  if (/^(?:my contacts|contacts|אנשי קשר|האנשי קשר שלי|מי אנשי הקשר)\??$/i.test(text.trim())) return plan(he ? "אנשי הקשר." : "Your contacts.", [{ tool: "contacts_list", params: {} }]);
+
   // Clipboard
   if ((m = text.match(/^(?:copy|העתק)\s+(.+?)\s+(?:to (?:the )?clipboard|ללוח)$/i))) return plan(he ? "מעתיק ללוח." : "Copying to the clipboard.", [{ tool: "clipboard_write", params: { text: q(m[1]) } }]);
   if (/^(?:what(?:'s| is) (?:in|on) (?:the )?clipboard|read (?:the )?clipboard|מה בלוח|מה יש בלוח|קרא את הלוח)/i.test(text)) return plan(he ? "קריאת הלוח דורשת אישור." : "Reading the clipboard needs approval.", [{ tool: "clipboard_read", params: {} }]);
