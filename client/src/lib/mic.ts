@@ -89,6 +89,7 @@ export class MicCapture {
   private peak = 0;
   private silentReported = false;
   private deviceLabel = "";
+  private deaf = false;
   running = false;
 
   constructor(opts: MicOptions) {
@@ -166,6 +167,19 @@ export class MicCapture {
     this.opts.onLevel?.(0);
   }
 
+  /**
+   * Stop listening to what comes in, without closing the microphone.
+   *
+   * Used while JARVIS is speaking: the answer comes out of the same speakers
+   * the microphone is pointed at, and with the conversation window opening the
+   * moment the answer ends, JARVIS's own voice would otherwise arrive as the
+   * next command. Echo cancellation usually removes it; this removes the doubt.
+   */
+  setDeaf(deaf: boolean): void {
+    this.deaf = deaf;
+    if (deaf) this.discard();
+  }
+
   /** Throw away whatever is being recorded right now (used by Emergency Stop). */
   discard(): void {
     this.speaking = false;
@@ -176,6 +190,15 @@ export class MicCapture {
 
   private feed(input: Float32Array, rate: number): void {
     if (!this.running) return;
+    if (this.deaf) {
+      this.speaking = false;
+      this.segment = [];
+      this.segmentSamples = 0;
+      this.preroll = [];
+      this.prerollSamples = 0;
+      this.opts.onLevel?.(0);
+      return;
+    }
     const chunk = downsample(input, rate);
     const level = rms(chunk);
     this.opts.onLevel?.(Math.min(1, level * 12));

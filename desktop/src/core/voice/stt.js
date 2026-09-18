@@ -9,6 +9,7 @@ const path = require("path");
 
 const paths = require("../paths");
 const procs = require("../procs");
+const whisperServer = require("./whisper-server");
 
 const IS_WIN = os.platform() === "win32";
 
@@ -221,6 +222,8 @@ let fallback = null;
 
 function speedReport(cfg) {
   return {
+    // Whether the model is being held in memory, and for which model.
+    server: whisperServer.status(),
     mode: cfg?.voice?.mode === "accurate" ? "accurate" : "fast",
     gpu: cfg?.voice?.gpu === "off" ? "off" : "auto",
     fallback,
@@ -383,6 +386,38 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       // On a large one it multiplies the slowest part of the run on exactly the
       // computers that can least afford it - and a wake phrase that arrives
       // forty seconds late is the same as one that never arrives.
+      // The server keeps the model in memory between sentences; the program
+      // below loads it from disk every time. On a 466 MB model that difference
+      // is most of the wait, so the server is tried first and the program is
+      // what happens when it is not there or will not start.
+      if (cfg.voice?.keepModelLoaded !== false) {
+        const threads = Math.max(1, Math.min(8, os.cpus().length - 1));
+        let server = null;
+        try {
+          server = await whisperServer.ensure({ cliPath: d.binary, model, threads });
+        } catch {
+          server = null; // any trouble at all: use the program
+        }
+        if (server) {
+          try {
+            const text = await whisperServer.transcribe({
+              port: server.port,
+              wav,
+              language: language || "auto",
+              timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000,
+              signal,
+            });
+            const tookMs = Date.now() - startedAt;
+            remember(model, tookMs);
+            return { text: cleanup(text), engine: d.engine, model: path.basename(model), language, tookMs, via: "server" };
+          } catch (e) {
+            if (e && e.message === "cancelled") throw Object.assign(new Error("cancelled"), { code: "cancelled" });
+            // It was there and did not work. Stop it and fall through: a slow
+            // answer beats no answer, and the next utterance starts it again.
+            whisperServer.stop("it stopped answering");
+          }
+        }
+      }
       const args = whisperArgs({ model, file, language, mode, gpu: cfg.voice?.gpu, seconds: (wav.length - 44) / (16000 * 2) });
       const res = await procs.run(d.binary, args, { timeoutMs: timeoutMs ?? cfg.voice?.transcribeTimeoutMs ?? 120000, signal });
       if (res.cancelled) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
@@ -399,7 +434,7 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       }
       const tookMs = Date.now() - startedAt;
       remember(model, tookMs);
-      return { text: cleanup(text), engine: d.engine, model: path.basename(model), language, tookMs };
+      return { text: cleanup(text), engine: d.engine, model: path.basename(model), language, tookMs, via: "program" };
     }
     // Vosk, when the optional binding is installed.
     const vosk = require("vosk");

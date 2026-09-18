@@ -221,3 +221,54 @@ test("the flags follow the mode, and the processor is used when asked", () => {
   assert.ok(!prompt.includes("תתעורר"), prompt);
   assert.ok(!args({ language: "xx" }).includes("--prompt"), "a language with no prompt written for it gets none");
 });
+
+test("the model is kept in memory when the download came with a server", async () => {
+  // The program reloads a 466 MB model for every sentence, which on an ordinary
+  // disk is most of the wait. whisper-server ships in the same download and
+  // holds it in memory. This drives the real client against a stand-in server
+  // that speaks the same protocol.
+  const fs = require("fs");
+  const os = require("os");
+  const http = require("http");
+  const server = require("../src/core/voice/whisper-server");
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-wserver-"));
+  let received = null;
+  const stub = http.createServer((req, res) => {
+    if (req.url === "/") { res.writeHead(200).end("ok"); return; }
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      received = Buffer.concat(chunks).toString("latin1");
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: " שלום עולם " }));
+    });
+  });
+  try {
+    await new Promise((r) => { stub.listen(0, "127.0.0.1", r); });
+    const port = stub.address().port;
+
+    const wav = Buffer.concat([Buffer.from("RIFF0000WAVE"), Buffer.alloc(3200)]);
+    const text = await server.transcribe({ port, wav, language: "he", timeoutMs: 5000 });
+    assert.equal(text.trim(), "שלום עולם", "the transcript comes back from the server");
+    assert.match(received, /name="file"; filename="a\.wav"/, "the audio is posted as a file");
+    assert.match(received, /name="language"[\s\S]*he/, "in the language asked for");
+    assert.ok(!/name="translate"/.test(received), "and never asked to be translated");
+
+    // No server binary beside the program: the caller must get null and use the
+    // command line, rather than an error.
+    const cli = path.join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli");
+    fs.writeFileSync(cli, "x");
+    assert.equal(server.serverBinaryFor(cli), null);
+    assert.equal(await server.ensure({ cliPath: cli, model: path.join(dir, "m.bin"), threads: 2 }), null);
+    assert.deepEqual(server.status(), { running: false, model: null, port: null });
+
+    // And it is found when the download did include it.
+    const srv = path.join(dir, process.platform === "win32" ? "whisper-server.exe" : "whisper-server");
+    fs.writeFileSync(srv, "x");
+    assert.equal(server.serverBinaryFor(cli), srv);
+  } finally {
+    stub.close();
+    server.stop("test over");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

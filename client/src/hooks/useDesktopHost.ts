@@ -20,7 +20,7 @@ export function useDesktopHost(): void {
     const offSpeak = bridge.onSpeak?.((text) => {
       const s = useJarvis.getState();
       if (s.voice?.muted || s.settings?.tts.enabled === false) return;
-      void speak(text, s.settings?.tts.lang ?? (s.settings?.language === "en" ? "en-US" : "he-IL")).then((res) => {
+      void speak(text, s.settings?.tts.lang ?? (s.settings?.language === "en" ? "en-US" : "he-IL"), s.settings?.tts.voice || null).then((res) => {
         if (!res.spoken && res.reason && useJarvis.getState().ttsNote !== res.reason) {
           useJarvis.setState({ ttsNote: res.reason });
           s.addLog("warn", res.reason, res.fix ?? undefined);

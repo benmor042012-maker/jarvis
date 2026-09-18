@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api";
 import { Dialog } from "../components/Dialog";
+import { localVoices, speak, speechAvailable } from "../lib/speech";
 import { useAction } from "../lib/useAction";
 import { useJarvis } from "../state/jarvisStore";
 import type { AppInfo, Settings, SettingsUpdate } from "../types";
@@ -14,6 +15,18 @@ export function SettingsPanel() {
   const [form, setForm] = useState<SettingsUpdate>({});
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [voices, setVoices] = useState<{ name: string; lang: string }[]>([]);
+  const [tested, setTested] = useState<string | null>(null);
+
+  // Chrome fills the voice list asynchronously, and it changes when a voice is
+  // installed or removed while the page is open.
+  useEffect(() => {
+    if (!speechAvailable()) return;
+    const read = () => { setVoices(localVoices()); };
+    read();
+    window.speechSynthesis.addEventListener("voiceschanged", read);
+    return () => { window.speechSynthesis.removeEventListener("voiceschanged", read); };
+  }, []);
 
   useEffect(() => {
     void refreshSettings();
@@ -238,6 +251,14 @@ export function SettingsPanel() {
               Speak the reply after a voice command
             </label>
             <label className="check">
+              <input type="checkbox" checked={voice.conversation} onChange={(e) => { setForm({ ...form, voice: { ...voice, conversation: e.target.checked } }); }} />
+              Keep listening after the answer, so a follow-up does not need the wake word again
+            </label>
+            <label className="field">
+              <span>How long to keep listening for a follow-up (seconds)</span>
+              <input type="number" min={2} max={60} value={Math.round(voice.followUpMs / 1000)} onChange={(e) => { setForm({ ...form, voice: { ...voice, followUpMs: Number(e.target.value) * 1000 } }); }} disabled={!voice.conversation} />
+            </label>
+            <label className="check">
               <input type="checkbox" checked={voice.keepAudio} onChange={(e) => { setForm({ ...form, voice: { ...voice, keepAudio: e.target.checked } }); }} />
               Keep the recordings on this computer (off by default — JARVIS deletes each temporary WAV right after transcribing it)
             </label>
@@ -343,6 +364,36 @@ export function SettingsPanel() {
               <input type="checkbox" checked={(form.tts ?? settings.tts).enabled} onChange={(e) => { setForm({ ...form, tts: { ...(form.tts ?? settings.tts), enabled: e.target.checked } }); }} />
               Speak replies out loud
             </label>
+            <label className="field">
+              <span>Voice</span>
+              <select value={(form.tts ?? settings.tts).voice} onChange={(e) => { setForm({ ...form, tts: { ...(form.tts ?? settings.tts), voice: e.target.value } }); }}>
+                <option value="">First voice installed for the language</option>
+                {voices.map((v) => (
+                  <option key={v.name} value={v.name}>{`${v.name} (${v.lang})`}</option>
+                ))}
+              </select>
+            </label>
+            <p className="help">
+              {voices.length
+                ? "Only voices installed on this computer are listed — nothing is spoken by a remote service. Add more in Windows Settings → Time & language → Speech → Manage voices."
+                : "No local voice is installed, or this browser has none. Add one free in Windows Settings → Time & language → Speech → Manage voices."}
+            </p>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!voices.length}
+              onClick={() => {
+                const pick = (form.tts ?? settings.tts);
+                const lang = pick.lang || ((form.language ?? settings.language) === "en" ? "en-US" : "he-IL");
+                setTested(null);
+                void speak(lang.startsWith("he") ? "שלום, אני ג'רביס. ככה אני נשמע." : "Hello, this is JARVIS. This is how I sound.", lang, pick.voice || null).then((res) => {
+                  setTested(res.spoken ? "Spoken." : (res.reason ?? "Nothing was spoken."));
+                });
+              }}
+            >
+              Hear this voice
+            </button>
+            {tested && <p className="help">{tested}</p>}
           </div>
         </fieldset>
 
