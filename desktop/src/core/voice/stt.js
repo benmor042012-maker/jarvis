@@ -199,7 +199,18 @@ function chooseModel(chosen, seen, seenFor = () => null) {
   return { model: pick.file, fallback: { from: path.basename(chosen), to: path.basename(pick.file), ms: Math.round(seen.avg) } };
 }
 
-function fastEnough(d) {
+/**
+ * The model to run, for the mode asked for.
+ *
+ * fast: the smallest installed model that still does Hebrew — what you want
+ * when you are talking to it. accurate: what is configured, however heavy, and
+ * no automatic downshift: someone who picks accuracy means it.
+ */
+function forMode(d, mode) {
+  if (mode !== "fast") {
+    fallback = null;
+    return d.model;
+  }
   const out = chooseModel(d.model, speed.get(d.model), (f) => speed.get(f) ?? null);
   fallback = out.fallback;
   return out.model;
@@ -208,8 +219,10 @@ function fastEnough(d) {
 // The switch that has been made, if any, so the window can say so.
 let fallback = null;
 
-function speedReport() {
+function speedReport(cfg) {
   return {
+    mode: cfg?.voice?.mode === "accurate" ? "accurate" : "fast",
+    gpu: cfg?.voice?.gpu === "off" ? "off" : "auto",
     fallback,
     perModel: Object.fromEntries([...speed.entries()].map(([file, v]) => [path.basename(file), Math.round(v.avg)])),
     targetMs: TARGET_MS,
@@ -316,7 +329,8 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
     e.install = d.install;
     throw e;
   }
-  const model = fastEnough(d);
+  const mode = cfg.voice?.mode === "accurate" ? "accurate" : "fast";
+  const model = forMode(d, mode);
   const file = tempWavPath();
   const startedAt = Date.now();
   fs.writeFileSync(file, wav, { mode: 0o600 });
@@ -330,14 +344,23 @@ async function transcribe(wav, { cfg, language = "he", signal, timeoutMs } = {})
       // On a large one it multiplies the slowest part of the run on exactly the
       // computers that can least afford it - and a wake phrase that arrives
       // forty seconds late is the same as one that never arrives.
+      // Accurate mode always searches; fast mode only does so on a small model,
+      // where the search is cheap and the model needs the help.
       const big = /large|medium/i.test(path.basename(model));
-      const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", big ? "1" : "5", "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      const beam = mode === "accurate" ? "5" : big ? "1" : "5";
+      const args = ["-m", model, "-f", file, "-l", language || "auto", "-otxt", "-of", file.replace(/\.wav$/, ""), "-np", "-nt", "-bs", beam, "-t", String(Math.max(1, Math.min(8, os.cpus().length - 1)))];
+      // The engine uses a GPU when the build has support and the machine has
+      // one, and falls back to the CPU by itself when either is missing. -ng
+      // is the only lever there is: it forces the CPU.
+      if (cfg.voice?.gpu === "off") args.push("-ng");
       // whisper always looks at a 30-second window, so a one-second command
       // costs the same as half a minute of speech unless it is told otherwise.
       // -ac trims the encoder to the audio that actually exists. This is the
       // single biggest saving on short commands, which is all JARVIS ever gets.
       const seconds = (wav.length - 44) / (16000 * 2);
-      if (seconds > 0 && seconds < 20) {
+      // Accurate mode keeps the whole window: trimming it is a speed trade, and
+      // that is the one thing accurate mode is not making.
+      if (mode === "fast" && seconds > 0 && seconds < 20) {
         const ctx = Math.max(256, Math.min(1500, Math.ceil(((seconds + 1.5) / 30) * 1500 / 64) * 64));
         args.push("-ac", String(ctx));
       }
@@ -424,12 +447,29 @@ function engineFailure(res, d) {
   return e;
 }
 
+/**
+ * What the engine prints, turned into what the person said.
+ *
+ * Whisper annotates: [BLANK_AUDIO], (music), ♪ for anything it thinks is not
+ * speech. On a short Hebrew clip it also loops — "פתח פתח פתח" — and wraps the
+ * whole line in quotes when the initial prompt was a sentence. None of that is
+ * what was said, and all of it breaks a phrase match.
+ */
 function cleanup(text) {
-  return String(text || "")
+  let out = String(text || "")
     .replace(/\[[^\]]*\]/g, " ") // [BLANK_AUDIO], [Music] …
     .replace(/\([^)]*\)/g, " ")
+    .replace(/[♪♫]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  // A line the engine wrapped in quotes, opened and closed. Quotes inside a
+  // sentence are left alone.
+  const quoted = /^["'\u201c\u201d\u05f4](.+)["'\u201c\u201d\u05f4]$/.exec(out);
+  if (quoted) out = quoted[1].trim();
+  // The stutter a short clip produces: the same word three or more times in a
+  // row becomes one. Two in a row can be real speech ("כן כן"), so it stays.
+  out = out.replace(/(^|\s)(\S+)(\s+\2){2,}(?=\s|$)/g, "$1$2");
+  return out.trim();
 }
 
 module.exports = {

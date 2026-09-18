@@ -102,7 +102,7 @@ class VoiceSession extends EventEmitter {
         checked: engine.checked,
         // Which model is actually running, and why it is not the configured
         // one. A switch made for speed is never silent.
-        speed: stt.speedReport(),
+        speed: stt.speedReport(cfg),
       },
       microphone: { granted: this.micGranted, required: true },
       wakePhrases: v.wakePhrases || [],

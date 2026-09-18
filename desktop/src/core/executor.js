@@ -38,11 +38,15 @@ class Executor extends EventEmitter {
     if (this.state.emergency) {
       return this._storePlan({ command, message: "Emergency stop is active. Clear it before planning anything.", actions: [], provider: "none", mock: true, device, session, denied: "emergency_stopped" });
     }
+    // How long the planner took is part of "why did that take so long": with
+    // a local model it is usually the largest piece after transcription, and
+    // without one it is nothing at all.
+    const startedAt = Date.now();
     const raw = await planCommand(command, { cfg, registry: this.registry, signal, forceMock });
-    return this._storePlan({ command, ...raw, device, session });
+    return this._storePlan({ command, ...raw, device, session, planMs: Date.now() - startedAt });
   }
 
-  _storePlan({ command, message, actions = [], provider, model = null, mock, notes = [], suggest = null, device, session, denied = null, unknown = false }) {
+  _storePlan({ command, message, actions = [], provider, model = null, mock, notes = [], suggest = null, device, session, denied = null, unknown = false, planMs = null }) {
     const cfg = this.getConfig();
     const planId = uuid();
     const decorated = actions.map((a, i) => {
@@ -77,6 +81,7 @@ class Executor extends EventEmitter {
       provider,
       model,
       mock: !!mock,
+      plan_ms: planMs,
       notes,
       suggest,
       unknown,
@@ -254,7 +259,10 @@ class Executor extends EventEmitter {
 
   publicJob(job) {
     const { controller, ...rest } = job;
-    return rest;
+    // How long this has been running, so the window can show the time a command
+    // actually took rather than leaving the person to guess whether it is
+    // working or stuck.
+    return { ...rest, ms: (rest.finished_at || nowMs()) - rest.started_at };
   }
 
   getJob(id) {

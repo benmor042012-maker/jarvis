@@ -129,6 +129,7 @@ interface JarvisState {
   setVoicePaused: (paused: boolean) => Promise<void>;
   setVoiceMuted: (muted: boolean) => Promise<void>;
   setKeyboard: (on: boolean) => void;
+  setVoiceMode: (mode: "fast" | "accurate") => Promise<void>;
   teachWakeWord: () => Promise<void>;
   forgetWakeWord: () => void;
   refreshMicDevices: () => Promise<void>;
@@ -489,6 +490,28 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     set({ keyboard: on });
   },
 
+  setVoiceMode: async (mode) => {
+    // Owner-only, like every other setting: this changes how the computer
+    // itself listens, and a paired phone does not get to decide that.
+    try {
+      // Send only what changed, on top of what the agent last reported: the
+      // update takes a whole voice block, and a partial one would blank the
+      // rest of it.
+      const current = get().settings?.voice;
+      if (!current) {
+        await get().refreshSettings();
+      }
+      const voice = get().settings?.voice;
+      if (!voice) throw new Error("The settings are not loaded yet.");
+      const r = await api.updateSettings({ voice: { ...voice, mode } });
+      set({ settings: r.settings });
+      await get().refreshVoice(true);
+      get().addLog("system", mode === "fast" ? "Fast mode: the quickest model installed, one pass. Answers in about a second." : "Accurate mode: the model you chose, full search. Slower, and it mishears less.");
+    } catch (err) {
+      get().addLog("error", describeError(err));
+    }
+  },
+
   teachWakeWord: async () => {
     // Three recordings: enough for the detector to know how much this person's
     // own voice varies, which is what sets its tolerance. Fewer, and the
@@ -593,6 +616,28 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     set({ callOpen: id });
   },
 }));
+
+// Jobs already announced or timed, so a stream of updates for one job does not
+// repeat itself in the log.
+const announced = new Set<string>();
+const timed = new Set<string>();
+
+/**
+ * Where the time went, in the words of someone waiting: heard (the speech
+ * engine), thought (the planner), did (running the actions). Stages that did
+ * not happen are left out rather than shown as zero.
+ */
+function stageTimes(job: Job): string {
+  const s = useJarvis.getState();
+  const secs = (ms: number) => `${String(Math.round(ms / 100) / 10)}s`;
+  const parts: string[] = [];
+  const heard = s.voice?.last_heard?.took_ms ?? null;
+  if (heard) parts.push(`heard ${secs(heard)}`);
+  const plan = s.lastPlan?.plan_ms ?? null;
+  if (plan) parts.push(`thought ${secs(plan)}`);
+  if (job.ms) parts.push(`did ${secs(job.ms)}`);
+  return parts.length ? parts.join(" · ") : "";
+}
 
 // --- microphone ---------------------------------------------------------------
 const MIC_DEVICE_KEY = "jarvis.mic.device";
@@ -1044,9 +1089,25 @@ function onEvent(ev: AgentEvent): void {
       deriveOrb();
       break;
     }
-    case "job":
+    case "job": {
       if (s.activeJob?.job_id === ev.job.job_id || !s.activeJob || s.activeJob.status !== "running") useJarvis.setState({ activeJob: ev.job });
+      // Say something the moment work starts. A job with several steps can run
+      // for a while, and an assistant that goes quiet the second you ask it for
+      // something looks like one that did not hear you.
+      if (ev.job.status === "running" && !announced.has(ev.job.job_id)) {
+        announced.add(ev.job.job_id);
+        if (announced.size > 50) announced.delete([...announced][0] as string);
+        const steps = ev.job.total;
+        s.addLog("system", steps > 1 ? `Starting — ${String(steps)} steps.` : "Starting.");
+      }
+      if ((ev.job.status === "completed" || ev.job.status === "failed" || ev.job.status === "cancelled") && !timed.has(ev.job.job_id)) {
+        timed.add(ev.job.job_id);
+        if (timed.size > 50) timed.delete([...timed][0] as string);
+        const line = stageTimes(ev.job);
+        if (line) s.addLog("system", line);
+      }
       break;
+    }
     case "reminder":
       s.addLog("warn", `⏰ Reminder: ${ev.reminder.text}`);
       break;

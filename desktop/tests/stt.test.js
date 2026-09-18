@@ -183,3 +183,60 @@ test("a model too slow for this computer gives way to the biggest one that keeps
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the flags follow the mode, and the processor is used when asked", async () => {
+  // What actually reaches whisper.cpp decides both the speed and the accuracy,
+  // so the flags are pinned rather than trusted.
+  const fs = require("fs");
+  const os = require("os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-flags-"));
+  const model = path.join(dir, "ggml-small.bin");
+  const seen = [];
+  // A stand-in engine: it records the arguments and writes an empty transcript.
+  const bin = path.join(dir, "whisper-cli.mjs");
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const a = process.argv.slice(2);
+if (a.includes("--help")) { console.log("usage"); process.exit(0); }
+writeFileSync(process.env.JARVIS_FLAG_LOG, JSON.stringify(a));
+writeFileSync(a[a.indexOf("-of") + 1] + ".txt", "שלום\\n");
+`);
+  fs.chmodSync(bin, 0o755);
+  const log = path.join(dir, "flags.json");
+  process.env.JARVIS_FLAG_LOG = log;
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0, "ascii"); head.writeUInt32LE(36 + 32000, 4); head.write("WAVEfmt ", 8, "ascii");
+  head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(16000, 24); head.writeUInt32LE(32000, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+  head.write("data", 36, "ascii"); head.writeUInt32LE(32000, 40);
+  const oneSecond = Buffer.concat([head, Buffer.alloc(32000)]);
+  try {
+    fs.writeFileSync(model, "ggml");
+    // Detection is cached for fifteen seconds, and an earlier test in this file
+    // has already filled it with a folder that no longer exists.
+    stt.resetCache();
+    const run = async (voice) => {
+      await stt.transcribe(oneSecond, { cfg: { voice: { whisperPath: bin, whisperModel: model, ...voice } }, language: "he" });
+      stt.resetCache();
+      return JSON.parse(fs.readFileSync(log, "utf8"));
+    };
+
+    const fast = await run({ mode: "fast" });
+    seen.push(fast);
+    assert.ok(fast.includes("-ac"), "fast mode trims the encoder to the length of the recording");
+    assert.equal(fast[fast.indexOf("-l") + 1], "he", "Hebrew is what was asked for");
+    assert.ok(!fast.includes("-tr"), "and it is never translated into English");
+    assert.ok(!fast.includes("-ng"), "the graphics card is left to the engine by default");
+
+    const accurate = await run({ mode: "accurate" });
+    assert.ok(!accurate.includes("-ac"), "accurate mode keeps the whole window");
+    assert.equal(accurate[accurate.indexOf("-bs") + 1], "5", "and searches rather than taking the first guess");
+
+    const cpuOnly = await run({ mode: "fast", gpu: "off" });
+    assert.ok(cpuOnly.includes("-ng"), "processor-only means processor-only");
+  } finally {
+    delete process.env.JARVIS_FLAG_LOG;
+    fs.rmSync(dir, { recursive: true, force: true });
+    stt.resetCache();
+  }
+});

@@ -191,7 +191,29 @@ export function SettingsPanel() {
             </label>
             <label className="field">
               <span>Speech language</span>
-              <input value={voice.language} onChange={(e) => { setForm({ ...form, voice: { ...voice, language: e.target.value } }); }} placeholder="he" />
+              <select value={voice.language} onChange={(e) => { setForm({ ...form, voice: { ...voice, language: e.target.value } }); }}>
+                <option value="he">Hebrew (עברית)</option>
+                <option value="en">English</option>
+                <option value="auto">Whatever is spoken (slower, and guesses)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Speed</span>
+              <select value={voice.mode} onChange={(e) => { setForm({ ...form, voice: { ...voice, mode: e.target.value as "fast" | "accurate" } }); }}>
+                <option value="fast">Fast — the quickest model installed, one pass</option>
+                <option value="accurate">Accurate — the model below, full search</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Graphics card</span>
+              <select value={voice.gpu} onChange={(e) => { setForm({ ...form, voice: { ...voice, gpu: e.target.value as "auto" | "off" } }); }}>
+                <option value="auto">Use one if this computer has a supported one</option>
+                <option value="off">Processor only</option>
+              </select>
+            </label>
+            <label className="field span-2">
+              <span>Speech model file (leave empty to let JARVIS find one)</span>
+              <input value={voice.whisperModel} onChange={(e) => { setForm({ ...form, voice: { ...voice, whisperModel: e.target.value } }); }} placeholder="C:\Users\you\.jarvis\speech\ggml-small.bin" />
             </label>
             <label className="field">
               <span>Maximum listening time after waking (seconds)</span>

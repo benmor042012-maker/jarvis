@@ -179,6 +179,7 @@ Telegram, SMS or email.
 npm run setup           # install + build + test
 npm run ai              # optional: install the local AI brain (Ollama + a model)
 npm run voice           # optional: install local speech recognition (whisper.cpp + a model)
+npm run bench:voice     # how long this computer takes: wake word, engine per model, the rest
 node scripts/make-icons.mjs  # redraw the window and tray icons (they are generated, not artwork)
 npm start               # desktop agent (or headless if Electron is missing)
 npm run headless        # agent without a window (Linux/servers/CI)
@@ -216,6 +217,17 @@ Export or delete all of it from **Activity log → Export my data / Delete local
 - Mouse, keyboard, window and screen-info tools use Windows APIs. On macOS and Linux they report
   themselves unavailable with the reason; the rest of JARVIS keeps working.
 - Browser automation needs the Electron window (it uses the built-in Chromium). Headless mode says so.
+- **Fast mode and Accurate mode.** Fast (the default) runs the smallest installed model that still
+  does Hebrew, one decoding pass, and only as much of the encoder as the recording needs — it is
+  meant to answer while you are still listening for it. Accurate runs the model you configured, full
+  beam search, the whole window. The button is in the voice bar; the setting is in Settings → Voice.
+- **A graphics card is used when there is one to use.** whisper.cpp decides: a build with GPU support
+  on a machine that has one uses it, and anything else falls back to the processor by itself. The
+  only lever is Settings → Voice → *Processor only*, which forces the CPU. There is no "GPU on" —
+  claiming one would not make the build support it.
+- **Where the time went is shown, not guessed at.** Each command logs `heard 0.9s · thought 0.2s ·
+  did 1.1s`, and long jobs say "Starting" the moment they begin rather than going quiet.
+  `npm run bench:voice` measures the same three stages on your machine, before and after a change.
 - **A taught wake word answers immediately; the speech engine is for what you say next.** Running
   every sound through whisper.cpp to find out whether it was the wake phrase costs seconds on an
   ordinary computer, and a wake answered five seconds late reads as one that was ignored. Voice →
