@@ -4,3 +4,7 @@ client/dist/
 desktop/dist/
 *.log
 .DS_Store
+.venv/
+.wrangler/
+__pycache__/
+*.pyc

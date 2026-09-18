@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { agentApi, api } from "../api";
 import { MicCapture, micSupport } from "../lib/mic";
 import { enroll, loadWakeModel, saveWakeModel, WakeDetector, type WakeModel } from "../lib/wake";
-import { AgentError, describeError, loadCreds, saveCreds } from "../lib/protocol";
+import { AgentError, describeError, loadCreds, loadRelay, saveCreds, saveRelay, type RelayConfig } from "../lib/protocol";
 import { alertSound, sleepSound, stopSound, unlockAudio, wakeSound } from "../lib/sound";
 import { speak, stopSpeaking, warmVoices } from "../lib/speech";
 import type { AgentEvent, CallRequest, CustomerAlert, DeviceCreds, DeviceInfo, HealthResponse, Job, PhoneCapabilities, Plan, Settings, SpeechEngineInstall, Status, UtteranceResult, VoiceState, VoiceStatus } from "../types";
@@ -11,6 +11,33 @@ import type { AgentEvent, CallRequest, CustomerAlert, DeviceCreds, DeviceInfo, H
 export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "busy" | "approval" | "success" | "error" | "offline" | "emergency";
 export type Connection = "connecting" | "online" | "offline" | "unpaired" | "unauthorized";
 export type Panel = null | "status" | "devices" | "tools" | "audit" | "projects" | "drafts" | "settings" | "voice" | "alerts" | "phone";
+
+// Reads `#code=...&relay=...&room=...` from a scanned pairing QR.
+function readPairingFragment(): { code?: string; relay?: RelayConfig } | null {
+  try {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return null;
+    const q = new URLSearchParams(hash);
+    const code = q.get("code") ?? undefined;
+    const url = q.get("relay");
+    const room = q.get("room");
+    const out: { code?: string; relay?: RelayConfig } = {};
+    if (code && /^\d{6,10}$/.test(code)) out.code = code;
+    if (url && room && /^[a-f0-9]{32}$/.test(room) && /^https:\/\//.test(url)) out.relay = { url, room };
+    // Clear the fragment either way: a pairing code must not survive in history.
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    return out.code || out.relay ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultDeviceName(): string {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad/.test(ua)) return "iPhone";
+  if (/Android/.test(ua)) return "Android phone";
+  return "Browser";
+}
 export type LogKind = "user" | "assistant" | "action" | "system" | "error" | "warn";
 
 export interface LogEntry {
@@ -44,6 +71,9 @@ interface JarvisState {
   lastSeen: number | null;
   reconnectIn: number | null;
   creds: DeviceCreds | null;
+  // Set when this browser reaches the computer through the relay rather than
+  // over the local network. Null means local-only.
+  relay: RelayConfig | null;
   health: HealthResponse | null;
   status: Status | null;
   settings: Settings | null;
@@ -113,6 +143,7 @@ interface JarvisState {
   setOrb: (orb: OrbState, text?: string) => void;
   flash: (orb: "success" | "error", text: string, ms?: number) => void;
   bootstrap: () => Promise<void>;
+  setRelay: (relay: RelayConfig | null) => void;
   pair: (code: string, name: string) => Promise<void>;
   unpair: () => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -171,6 +202,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   lastSeen: null,
   reconnectIn: null,
   creds: null,
+  relay: null,
   health: null,
   status: null,
   settings: null,
@@ -235,6 +267,17 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   },
 
   bootstrap: async () => {
+    // A pairing QR opens this page with everything the phone needs in the URL
+    // fragment, which never leaves the browser. Consume it, then scrub it from
+    // the address bar so the one-time code is not left in history.
+    const scanned = readPairingFragment();
+    if (scanned?.relay) {
+      saveRelay(scanned.relay);
+      agentApi.relay = scanned.relay;
+    } else {
+      agentApi.relay = loadRelay();
+    }
+
     let creds = loadCreds();
     const bridge = desktopBridge();
     if (bridge) {
@@ -246,8 +289,25 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       }
     }
     agentApi.creds = creds;
-    set({ creds });
+    set({ creds, relay: agentApi.relay });
+
+    // Scanned a code while not yet paired: finish the pairing without making
+    // the user retype anything.
+    if (!creds && scanned?.code) {
+      try {
+        await get().pair(scanned.code, defaultDeviceName());
+        return;
+      } catch (e) {
+        get().addLog("error", describeError(e));
+      }
+    }
     await connectLoop();
+  },
+
+  setRelay: (relay) => {
+    saveRelay(relay);
+    agentApi.relay = relay;
+    set({ relay });
   },
 
   pair: async (code, name) => {
@@ -270,8 +330,10 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     }
     stopEvents();
     saveCreds(null);
+    saveRelay(null);
     agentApi.creds = null;
-    set({ creds: null, connection: "unpaired", status: null, pendingPlans: [], activeJob: null });
+    agentApi.relay = null;
+    set({ creds: null, relay: null, connection: "unpaired", status: null, pendingPlans: [], activeJob: null });
     deriveOrb();
   },
 

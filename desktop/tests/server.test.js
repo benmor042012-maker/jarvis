@@ -416,7 +416,10 @@ test("every setting the interface can edit actually saves", async () => {
   // it: the switch moves, nothing changes, and nothing says so. Every group in
   // the config is either editable or listed here as deliberately not.
   const config = require("../src/core/config");
-  const NOT_EDITABLE = ["version"]; // bumped by migrations, never by a person
+  // "relay" is deliberately not here: enabling remote access rotates the room
+  // and restarts the outbound link, so it has its own route. The test below
+  // proves settings/update refuses it out loud rather than dropping it.
+  const NOT_EDITABLE = ["version", "relay"]; // bumped by migrations, never by a person
   // "server" is editable too, but changing its port or LAN flag restarts the
   // listener out from under this test, so it is checked without a change.
   const groups = Object.keys(config.load()).filter((k) => !NOT_EDITABLE.includes(k) && k !== "server");

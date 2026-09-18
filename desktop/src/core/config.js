@@ -92,6 +92,10 @@ const DEFAULTS = {
   contacts: [], // [{ name, phone }]
   deviceExpiryDays: 30,
   privacy: { keepAuditDays: 90 },
+  // Remote access from a phone. Off by default: enabling it is the one setting
+  // that lets this computer be reached from outside the local network, so it is
+  // always an explicit choice. The relay carries only sealed frames.
+  relay: { enabled: false, url: "", room: "" },
 };
 
 function validateQuietHours(q, label) {
@@ -208,6 +212,23 @@ function sanitizePartial(partial) {
       }
     }
     if (p.ai.provider !== undefined && !["auto", "ollama", "localai", "mock"].includes(p.ai.provider)) throw new Error("ai.provider is invalid");
+  }
+  if (p.relay) {
+    if (p.relay.url !== undefined && String(p.relay.url).trim()) {
+      let u;
+      try { u = new URL(p.relay.url); } catch { throw new Error("relay.url is not a valid URL"); }
+      // A relay carries traffic across the internet, so plain http would expose
+      // routing metadata to anyone on the path even though the payload is sealed.
+      if (u.protocol !== "https:") throw new Error("relay.url must start with https://");
+      p.relay.url = u.origin;
+    }
+    if (p.relay.room !== undefined && String(p.relay.room).trim() && !/^[a-f0-9]{32}$/.test(p.relay.room)) {
+      throw new Error("relay.room must be 32 hex characters");
+    }
+    if (p.relay.enabled) {
+      const url = p.relay.url !== undefined ? p.relay.url : load().relay?.url;
+      if (!url) throw new Error("set the relay address before turning remote access on");
+    }
   }
   return p;
 }

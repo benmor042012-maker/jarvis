@@ -115,6 +115,38 @@ class Server {
     r("devices/rename", async ({ params, device }) => { if (!A.devices.rename(String(params.device_id || device.id), String(params.name || ""))) throw httpError(404, "unknown device"); return { devices: A.devices.list() }; });
 
     r("audit/read", async ({ params }) => ({ entries: audit.read({ limit: Math.min(1000, Number(params.limit) || 200), days: Math.min(90, Number(params.days) || 7) }) }));
+    // --- remote access (relay) ------------------------------------------------
+    // All owner-only: a phone that is already paired must never be able to turn
+    // remote access on, point it at a different relay, or read the room id.
+    r("relay/status", async () => ({ relay: A.relay.status() }), { owner: true });
+
+    r("relay/configure", async ({ params, device }) => {
+      const patch = { relay: {} };
+      if (params.url !== undefined) patch.relay.url = String(params.url || "").trim();
+      if (params.enabled !== undefined) patch.relay.enabled = !!params.enabled;
+      // A room id is this computer's address on the relay. Rotating it instantly
+      // orphans every phone that knew the old one, which is the quickest way to
+      // cut off remote access without revoking each device.
+      const current = A.cfg().relay || {};
+      if (params.rotate_room || (!current.room && (patch.relay.enabled || patch.relay.url))) {
+        patch.relay.room = randomHex(16);
+      }
+      A.updateSettings(patch, device);
+      await A.relay.restart();
+      audit.log({ event: "relay_configured", device: device.name, detail: { enabled: !!A.cfg().relay.enabled, rotated: !!patch.relay.room } });
+      return { relay: A.relay.status(), status: A.status() };
+    }, { owner: true });
+
+    // Everything a phone needs, in one payload, for the QR code. It carries a
+    // one-time pairing code, so it is only useful for the five minutes it lives.
+    r("relay/pair-link", async ({ device }) => {
+      const cfg = A.cfg().relay || {};
+      if (!cfg.enabled || !cfg.url || !cfg.room) throw httpError(400, "Turn remote access on first.");
+      const code = A.devices.createPairCode();
+      audit.log({ event: "pair_code_created", device: device.name, detail: { via: "relay" } });
+      return { relay_url: cfg.url, room: cfg.room, code: code.code, expires_at: code.expires_at, protocol: 1 };
+    }, { owner: true });
+
     r("audit/export", async () => ({ files: audit.exportAll() }), { owner: true });
     r("data/export", async () => A.exportData(), { owner: true });
     r("data/delete", async ({ params, device }) => A.deleteData(params, device), { owner: true });
@@ -261,21 +293,47 @@ class Server {
     return null;
   }
 
-  async _api(req, res, name, ip, origin) {
+  // Transport-agnostic request handling. Both the local HTTP link and the
+  // relay go through here, so neither can bypass verification, the owner-only
+  // check, or the audit trail. Returns { status, body }.
+  async dispatch(name, body, { ip = "", via = "local" } = {}) {
     const route = this.routes.get(name);
-    if (!route) return json(res, 404, { error: "not_found" });
+    if (!route) return { status: 404, body: { error: "not_found" } };
+    const v = this.verifier.verify(body, "POST", "/api/" + name, ip);
+    if (!v.ok) {
+      if (v.reason !== "rate_limited") audit.log({ event: "request_rejected", status: v.reason, detail: { path: name, ip, via, detail: v.detail } });
+      return { status: v.status, body: { error: v.reason, detail: v.detail } };
+    }
+    if (route.owner && v.device.role !== "owner") {
+      audit.log({ event: "request_rejected", status: "forbidden", detail: { path: name, via, device: v.device.id } });
+      return { status: 403, body: { error: "forbidden", detail: "This action is only available from the JARVIS computer itself." } };
+    }
+    try {
+      const result = await route.handler({ params: v.params, device: v.device, envelope: v.envelope, session: v.envelope.session || null, ip, via });
+      return { status: 200, body: { ok: true, request_id: v.envelope.id, ...result } };
+    } catch (e) {
+      // Same treatment a thrown handler error got before this was extracted:
+      // server faults are audited, and every detail that leaves the process is
+      // redacted and length-capped.
+      const status = e?.status || 500;
+      if (status >= 500) audit.log({ event: "server_error", detail: { path: name, via, error: redact(String(e?.message || e)) } });
+      return {
+        status,
+        body: {
+          error: e?.code || (status >= 500 ? "internal_error" : "bad_request"),
+          detail: redact(String(e?.detail || e?.message || "error")).slice(0, 500),
+        },
+      };
+    }
+  }
+
+  async _api(req, res, name, ip, origin) {
     const cors = this._cors(origin, "/api/" + name);
     if (origin && !cors) return json(res, 403, { error: "forbidden_origin" });
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (e) { return json(res, e.message === "body too large" ? 413 : 400, { error: "malformed", detail: e.message === "body too large" ? "body too large" : "invalid JSON" }); }
-    const v = this.verifier.verify(body, "POST", "/api/" + name, ip);
-    if (!v.ok) {
-      if (v.reason !== "rate_limited") audit.log({ event: "request_rejected", status: v.reason, detail: { path: name, ip, detail: v.detail } });
-      return json(res, v.status, { error: v.reason, detail: v.detail }, cors || {});
-    }
-    if (route.owner && v.device.role !== "owner") return json(res, 403, { error: "forbidden", detail: "This action is only available from the JARVIS computer itself." }, cors || {});
-    const result = await route.handler({ params: v.params, device: v.device, envelope: v.envelope, session: v.envelope.session || null, ip });
-    return json(res, 200, { ok: true, request_id: v.envelope.id, ...result }, cors || {});
+    const out = await this.dispatch(name, body, { ip, via: "local" });
+    return json(res, out.status, out.body, cors || {});
   }
 
   /**

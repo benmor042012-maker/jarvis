@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs everything a reviewer would run: tests, lint, typecheck, build, and a
 // scan proving the product contains no cloud provider, API key or payment path.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,23 +30,38 @@ const FORBIDDEN = [
   [/ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_CLIENT_SECRET|TELEGRAM_BOT_TOKEN/i, "provider credential"],
   [/stripe|paddle\.com|checkout\.session|billing_portal/i, "payment flow"],
   [/google-analytics|googletagmanager|segment\.io|mixpanel|sentry\.io/i, "telemetry"],
-  [/workers\.dev|wrangler|cloudflare/i, "cloud relay"],
 ];
+
+// The optional phone relay is the one deliberate outbound path, and it is a
+// blind pipe: it carries sealed frames only, and the agent will not dial it
+// until the owner turns it on. So it is allowed inside its own boundary and
+// nowhere else — a relay reference leaking into the tool layer, the permission
+// engine or the agent loop would mean the pipe had grown opinions.
+const RELAY_ALLOWED = [
+  /^relay[\\/]/,
+  /^desktop[\\/]src[\\/]core[\\/](relay-client|channel|config|agent|server)\.js$/,
+  /^client[\\/]src[\\/](lib[\\/](channel|protocol)\.ts|api\.ts|types\.ts|state[\\/]jarvisStore\.ts|panels[\\/]DevicesPanel\.tsx)$/,
+  /^README\.md$/,
+];
+const RELAY_RE = /workers\.dev|wrangler|cloudflare/i;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "assets", "docs", ".venv"]);
 
-function walk(dir, acc = []) {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP_DIRS.has(e.name)) continue;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) walk(full, acc);
-    else if (/\.(js|mjs|cjs|ts|tsx|html|json|md|bat|sh|yml)$/.test(e.name) && statSync(full).size < 2_000_000) acc.push(full);
-  }
-  return acc;
+// Only tracked files are scanned: what is committed is what ships, and local
+// scratch state (a test run's settings file, a venv) is not part of the product.
+function tracked() {
+  const r = runSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" });
+  if (r.status !== 0) throw new Error("cannot list tracked files: " + (r.stderr || ""));
+  return r.stdout
+    .split("\0")
+    .filter((rel) => rel && /\.(js|mjs|cjs|ts|tsx|html|json|md|bat|sh|yml|toml)$/.test(rel))
+    .filter((rel) => !rel.split(/[\\/]/).some((part) => SKIP_DIRS.has(part)))
+    .map((rel) => join(ROOT, rel))
+    .filter((full) => existsSync(full) && statSync(full).size < 2_000_000);
 }
 
 process.stdout.write(`${C.c}▸${C.r} self-contained scan… `);
 const hits = [];
-for (const file of walk(ROOT)) {
+for (const file of tracked()) {
   const rel = relative(ROOT, file);
   // The patterns live in this script, and the test suite asserts that such
   // endpoints are *refused* — neither ships inside the product.
@@ -56,11 +71,15 @@ for (const file of walk(ROOT)) {
     const m = re.exec(text);
     if (m) hits.push(`${rel}: ${label} (${m[0]})`);
   }
+  const relay = RELAY_RE.exec(text);
+  if (relay && !RELAY_ALLOWED.some((re) => re.test(rel))) {
+    hits.push(`${rel}: relay reference outside the relay boundary (${relay[0]})`);
+  }
 }
 if (hits.length) {
   failed++;
   console.log(`${C.red}FAIL${C.r}\n` + hits.map((h) => "  " + h).join("\n"));
-} else console.log(`${C.g}pass${C.r} ${C.dim}(no cloud endpoint, credential, payment or telemetry reference in shipped code)${C.r}`);
+} else console.log(`${C.g}pass${C.r} ${C.dim}(no cloud endpoint, credential, payment or telemetry reference; relay stays inside its boundary)${C.r}`);
 
 step("agent tests", "npm", ["--prefix", "desktop", "test"]);
 step("client typecheck", "npm", ["--prefix", "client", "run", "typecheck"]);

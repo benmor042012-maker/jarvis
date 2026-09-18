@@ -378,6 +378,26 @@ export type AgentEvent =
   | { type: "alert"; at: number; alert: CustomerAlert }
   | { type: "call"; at: number; call: CallRequest };
 
+// Remote access through the relay. `configured` means an address and a room id
+// exist; `connected` means the computer is actually reaching the relay right now.
+export interface RelayStatus {
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  connected: boolean;
+  url: string | null;
+  last_poll: number | null;
+  last_error: string | null;
+}
+
+export interface RelayPairLink {
+  relay_url: string;
+  room: string;
+  code: string;
+  expires_at: number;
+  protocol: number;
+}
+
 // --- voice -----------------------------------------------------------------
 
 export type VoiceState = "unavailable" | "permission_required" | "off" | "standby" | "listening" | "thinking" | "speaking" | "paused" | "muted" | "quiet_hours";
