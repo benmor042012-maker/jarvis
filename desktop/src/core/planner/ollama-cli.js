@@ -42,9 +42,18 @@ function findOllama({ force = false } = {}) {
         path.join(home, "AppData", "Local", "Ollama", "ollama.exe"),
       ]
     : ["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama", "/usr/bin/ollama", path.join(home, ".local", "bin", "ollama")];
-  // An explicit override first, then PATH, then where each installer puts it.
+  // An explicit override is the whole answer: JARVIS_OLLAMA_BIN names the
+  // program, and if nothing is there then there is no Ollama — it does not
+  // fall through to PATH. That is what lets the tests keep their hands off
+  // the real one on a developer's machine.
   const fromEnv = process.env.JARVIS_OLLAMA_BIN;
-  const all = [fromEnv, IS_WIN ? "ollama.exe" : "ollama", ...candidates].filter(Boolean);
+  if (fromEnv) {
+    const hit = fs.existsSync(fromEnv) ? fromEnv : null;
+    found = { at: Date.now(), binary: hit };
+    return hit;
+  }
+  // Otherwise PATH, then where each installer puts it.
+  const all = [IS_WIN ? "ollama.exe" : "ollama", ...candidates];
   for (const c of all) {
     try {
       if (c.includes(path.sep) && !fs.existsSync(c)) continue;

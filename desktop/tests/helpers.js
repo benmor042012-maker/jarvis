@@ -10,6 +10,11 @@ function isolate() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-test-"));
   process.env.JARVIS_HOME = home;
   _home = home;
+  // A test never runs the real Ollama on the machine it happens to be on: it
+  // would take a minute per answer and make the model, not the code, the thing
+  // under test. Point the lookup at nothing; a test that wants a stand-in sets
+  // this itself afterwards.
+  if (!process.env.JARVIS_OLLAMA_BIN) process.env.JARVIS_OLLAMA_BIN = path.join(home, "no-ollama-here", "ollama");
   for (const k of Object.keys(require.cache)) if (k.includes(path.join("desktop", "src"))) delete require.cache[k];
   return home;
 }

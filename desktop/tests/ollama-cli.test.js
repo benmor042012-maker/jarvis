@@ -99,6 +99,21 @@ test("the first words of a JSON answer can be read while the rest is still arriv
   assert.equal(local.partialMessage(""), null);
 });
 
+test("an override that points at nothing means no Ollama, even with one on PATH", () => {
+  // The developer's own Ollama must never answer a test. With the stand-in
+  // on PATH and the override pointing at nothing, nothing is found.
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${tmp}${path.delimiter}${savedPath ?? ""}`;
+  try {
+    withoutStub();
+    assert.equal(cli.findOllama({ force: true }), null);
+    withStub();
+    assert.equal(cli.findOllama({ force: true }), stub, "and an override that exists is used as it is");
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
+
 test("Ollama absent: the rule planner answers, nothing pretends to be a model, no network is tried", { skip: WIN && "the stand-in is a shebang script, which Windows cannot spawn" }, async () => {
   withoutStub();
   const cfg = config.update({ ai: { provider: "auto", ollamaUrl: "http://127.0.0.1:1", localaiUrl: "http://127.0.0.1:1" } });
