@@ -8,11 +8,54 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { WIN, runAsync } from "./spawn-compat.mjs";
+import { WIN, runAsync, runSync } from "./spawn-compat.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const C = { r: "\x1b[0m", b: "\x1b[1m", dim: "\x1b[2m", y: "\x1b[33m", red: "\x1b[31m", c: "\x1b[36m" };
 const die = (m) => { console.log(`${C.red}✕${C.r} ${m}`); process.exit(1); };
+
+/**
+ * Bring in updates before starting, so a start is all it takes to be current.
+ *
+ * Only when this folder is a git clone with a tracked branch, only a
+ * fast-forward (local edits are never overwritten), only from the remote it
+ * already has — no other address is ever contacted. Offline, or with nothing
+ * new, it says so in one line and carries on with what is here. When the
+ * interface source or its dependencies changed, they are rebuilt and
+ * reinstalled here rather than left for the person to remember.
+ */
+function updateFromGit() {
+  if (process.argv.includes("--no-update") || !existsSync(join(ROOT, ".git"))) return;
+  const git = (args, timeout = 20000) => spawnSync("git", args, { cwd: ROOT, encoding: "utf8", timeout, windowsHide: true });
+  const before = git(["rev-parse", "HEAD"]).stdout?.trim();
+  if (!before) return;
+  const fetched = git(["fetch", "--quiet"], 25000);
+  if (fetched.status !== 0) {
+    console.log(`${C.dim}Update check skipped (${(fetched.stderr || "no network").trim().split("\n")[0].slice(0, 80)}). Starting what is here.${C.r}`);
+    return;
+  }
+  const behind = Number(git(["rev-list", "--count", "HEAD..@{u}"]).stdout?.trim() || 0);
+  if (!behind) return;
+  console.log(`${C.c}↓${C.r} ${String(behind)} update(s) available — bringing them in…`);
+  const pulled = git(["pull", "--ff-only", "--quiet"], 60000);
+  if (pulled.status !== 0) {
+    console.log(`${C.y}!${C.r} Could not update automatically (${(pulled.stderr || "").trim().split("\n")[0].slice(0, 120)}). Starting what is here; run ${C.b}git pull${C.r} to see why.`);
+    return;
+  }
+  const changed = git(["diff", "--name-only", before, "HEAD"]).stdout || "";
+  if (/^(client|desktop)\/package(-lock)?\.json$/m.test(changed)) {
+    console.log(`${C.dim}Dependencies changed — installing…${C.r}`);
+    for (const dir of ["client", "desktop"]) {
+      if (new RegExp(`^${dir}/package`, "m").test(changed) && runSync("npm", ["--prefix", dir, "install", "--no-audit", "--no-fund"], { cwd: ROOT, stdio: "inherit" }).status !== 0) die(`npm install failed in ${dir}/.`);
+    }
+  }
+  if (/^client\//m.test(changed)) {
+    console.log(`${C.dim}The interface changed — rebuilding…${C.r}`);
+    if (runSync("npm", ["run", "build"], { cwd: ROOT, stdio: "inherit" }).status !== 0) die("The interface build failed. The output above says why.");
+  }
+  console.log(`${C.c}✓${C.r} Updated to ${git(["log", "-1", "--format=%h %s"]).stdout?.trim() || "the latest version"}.`);
+}
+updateFromGit();
 
 if (!existsSync(join(ROOT, "client", "dist", "index.html"))) {
   console.log(`${C.y}!${C.r} The interface is not built yet — running setup first.`);

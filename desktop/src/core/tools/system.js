@@ -91,11 +91,20 @@ const system_status = {
   describe: () => "Check battery, disk, memory and uptime",
   async run(_p, { signal }) {
     const gb = (bytes) => Math.round((bytes / 1024 ** 3) * 10) / 10;
+    // Processor use is measured, not read: two samples of the per-core
+    // counters a quarter of a second apart (loadavg is always 0 on Windows).
+    const cpuAt = () => os.cpus().reduce((acc, c) => { const t = c.times; return { idle: acc.idle + t.idle, total: acc.total + t.user + t.nice + t.sys + t.irq + t.idle }; }, { idle: 0, total: 0 });
+    const c0 = cpuAt();
+    await new Promise((r) => setTimeout(r, 250));
+    const c1 = cpuAt();
+    const dTotal = c1.total - c0.total;
     const data = {
       computer: os.hostname(),
       uptime_hours: Math.round((os.uptime() / 3600) * 10) / 10,
       memory_free_gb: gb(os.freemem()),
       memory_total_gb: gb(os.totalmem()),
+      cpu_percent: dTotal > 0 ? Math.round(((dTotal - (c1.idle - c0.idle)) / dTotal) * 100) : null,
+      cpu_cores: os.cpus().length,
       battery: null,
       disks: [],
     };
@@ -123,6 +132,7 @@ $d | ForEach-Object { Write-Output "DISK|$_" }`,
     const disk = data.disks[0];
     if (disk) bits.push(`${String(disk.free_gb)} GB free on ${disk.drive}`);
     bits.push(`${String(data.memory_free_gb)} of ${String(data.memory_total_gb)} GB memory free`);
+    if (data.cpu_percent !== null) bits.push(`processor ${String(data.cpu_percent)}% busy`);
     bits.push(`up ${String(data.uptime_hours)} h`);
     return { ok: true, summary: bits.join(" · "), data };
   },
