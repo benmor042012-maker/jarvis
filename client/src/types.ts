@@ -572,6 +572,9 @@ export interface SystemStatus {
   uptime_hours: number;
   memory_free_gb: number;
   memory_total_gb: number;
+  /** Measured over a quarter of a second; null when it could not be. */
+  cpu_percent: number | null;
+  cpu_cores: number;
   battery: { percent: number; charging: boolean } | null;
   disks: { drive: string; free_gb: number; total_gb: number }[];
 }
