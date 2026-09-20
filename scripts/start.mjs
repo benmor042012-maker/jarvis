@@ -3,7 +3,7 @@
 // hotkey, browser automation). Otherwise, or with --headless, it runs the
 // agent without a window and prints the address and a pairing code.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,33 @@ function updateFromGit() {
   console.log(`${C.c}✓${C.r} Updated to ${git(["log", "-1", "--format=%h %s"]).stdout?.trim() || "the latest version"}.`);
 }
 updateFromGit();
+
+/**
+ * The window shows whatever was built last. After a `git pull` by hand the
+ * source is newer than the bundle, and starting would show the old screen
+ * with the new code sitting beside it — so an out-of-date bundle is rebuilt
+ * here, the same way the browser test refuses to test a stale one.
+ */
+function newestIn(dir) {
+  let latest = 0;
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else latest = Math.max(latest, statSync(full).mtimeMs);
+    }
+  };
+  try { walk(dir); } catch { /* nothing there */ }
+  return latest;
+}
+const indexHtml = join(ROOT, "client", "dist", "index.html");
+if (existsSync(indexHtml) && existsSync(join(ROOT, "client", "node_modules"))) {
+  const built = statSync(indexHtml).mtimeMs;
+  if (newestIn(join(ROOT, "client", "src")) > built || newestIn(join(ROOT, "client", "public")) > built) {
+    console.log(`${C.dim}The interface source is newer than the last build — rebuilding…${C.r}`);
+    if (runSync("npm", ["run", "build"], { cwd: ROOT, stdio: "inherit" }).status !== 0) die("The interface build failed. The output above says why.");
+  }
+}
 
 if (!existsSync(join(ROOT, "client", "dist", "index.html"))) {
   console.log(`${C.y}!${C.r} The interface is not built yet — running setup first.`);
