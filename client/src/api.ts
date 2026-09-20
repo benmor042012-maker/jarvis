@@ -8,7 +8,8 @@ type Ok<T> = { ok: true; request_id: string } & T;
 
 export const api = {
   status: () => agentApi.call<Ok<Status>>("status"),
-  command: (command: string, signal?: AbortSignal) => agentApi.call<Ok<{ plan: Plan }>>("command", { command }, { timeoutMs: 180000, ...(signal ? { signal } : {}) }),
+  command: (command: string, signal?: AbortSignal, requestId?: string) =>
+    agentApi.call<Ok<{ plan: Plan }>>("command", { command, ...(requestId ? { request_id: requestId } : {}) }, { timeoutMs: 180000, ...(signal ? { signal } : {}) }),
   pendingPlans: () => agentApi.call<Ok<{ plans: Plan[] }>>("plans/pending"),
   approvePlan: (plan_id: string, actions_hash: string, decision: "approve" | "reject", scope: "once" | "task") =>
     agentApi.call<Ok<{ plan: Plan; job?: Job }>>("plans/approve", { plan_id, actions_hash, decision, scope }, { timeoutMs: 180000 }),

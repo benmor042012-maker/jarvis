@@ -33,7 +33,7 @@ class Executor extends EventEmitter {
   }
 
   // --- planning ------------------------------------------------------------
-  async plan(command, { device, session, signal, forceMock } = {}) {
+  async plan(command, { device, session, signal, forceMock, onPartial } = {}) {
     const cfg = this.getConfig();
     if (this.state.emergency) {
       return this._storePlan({ command, message: "Emergency stop is active. Clear it before planning anything.", actions: [], provider: "none", mock: true, device, session, denied: "emergency_stopped" });
@@ -42,7 +42,7 @@ class Executor extends EventEmitter {
     // a local model it is usually the largest piece after transcription, and
     // without one it is nothing at all.
     const startedAt = Date.now();
-    const raw = await planCommand(command, { cfg, registry: this.registry, signal, forceMock });
+    const raw = await planCommand(command, { cfg, registry: this.registry, signal, forceMock, onPartial });
     return this._storePlan({ command, ...raw, device, session, planMs: Date.now() - startedAt });
   }
 

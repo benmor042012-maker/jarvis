@@ -378,7 +378,9 @@ export type AgentEvent =
   | { type: "voice_state"; at: number; state: VoiceState; reason: string | null }
   | { type: "voice"; at: number; event: "woke" | "stopped" | "command"; phrase?: string; text?: string; until?: number; plan_id?: string | null }
   | { type: "alert"; at: number; alert: CustomerAlert }
-  | { type: "call"; at: number; call: CallRequest };
+  | { type: "call"; at: number; call: CallRequest }
+  /** The first words of an answer, while the model is still writing the rest. */
+  | { type: "plan_progress"; at: number; request_id: string; device_id: string | null; message: string };
 
 // --- voice -----------------------------------------------------------------
 

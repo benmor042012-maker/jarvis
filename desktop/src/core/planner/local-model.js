@@ -2,6 +2,7 @@
 // keys, no cloud. Detection is cached briefly; planning asks for a JSON plan
 // that is then validated against the tool registry like any other plan.
 const { isPrivateHost } = require("../util");
+const cli = require("./ollama-cli");
 
 const CAPABILITY_WARNING = "Local models are smaller than hosted assistants: they can misunderstand, hallucinate tool arguments and are slower. Every plan is validated and shown before anything runs; if the model misbehaves, switch to the rule planner (MOCK MODE) or a different model.";
 
@@ -32,7 +33,26 @@ function assertPrivate(url) {
 
 async function detect(cfg, { force = false } = {}) {
   if (!force && cache.result && Date.now() - cache.at < 20000) return cache.result;
-  const out = { ollama: { url: cfg.ai.ollamaUrl, available: false, models: [], error: null }, localai: { url: cfg.ai.localaiUrl, available: false, models: [], error: null } };
+  const out = {
+    // The program on this computer, asked with `ollama list`. Preferred over
+    // the socket below: it needs no port, cannot be pointed anywhere else, and
+    // is found even when PATH in this window has not caught up with the
+    // installer.
+    cli: { binary: null, available: false, models: [], error: null },
+    ollama: { url: cfg.ai.ollamaUrl, available: false, models: [], error: null },
+    localai: { url: cfg.ai.localaiUrl, available: false, models: [], error: null },
+  };
+  try {
+    const binary = cli.findOllama();
+    out.cli.binary = binary;
+    if (!binary) out.cli.error = "not installed";
+    else {
+      const l = await cli.list({ binary });
+      out.cli.available = l.ok && l.models.length > 0;
+      out.cli.models = l.models;
+      out.cli.error = l.error;
+    }
+  } catch (e) { out.cli.error = e.message; }
   if (cfg.offlineMode) {
     // Offline mode still allows loopback model servers: they are on this machine.
   }
@@ -60,11 +80,16 @@ async function resolve(cfg) {
     const p = d[name];
     if (!p.available || !p.models.length) return null;
     const model = cfg.ai.model && p.models.includes(cfg.ai.model) ? cfg.ai.model : p.models[0];
-    return { provider: name, model, reason: cfg.ai.model && model !== cfg.ai.model ? `selected model '${cfg.ai.model}' is not installed; using ${model}` : "ready" };
+    const out = { provider: name, model, reason: cfg.ai.model && model !== cfg.ai.model ? `selected model '${cfg.ai.model}' is not installed; using ${model}` : "ready" };
+    if (name === "cli") out.binary = p.binary;
+    return out;
   };
   if (pref === "mock") return { provider: "mock", model: null, reason: "rule planner selected in settings" };
-  if (pref === "ollama" || pref === "localai") return pick(pref) || { provider: "mock", model: null, reason: `${pref} is not available (${d[pref].error || "no models installed"}); using the rule planner (MOCK MODE)` };
-  return pick("ollama") || pick("localai") || { provider: "mock", model: null, reason: `no local model found (Ollama: ${d.ollama.error || "no models"}; LocalAI: ${d.localai.error || "no models"}); using the rule planner (MOCK MODE)` };
+  // "ollama" means the local Ollama either way: the program first, the socket
+  // it also listens on as the fallback for an installation this cannot find.
+  if (pref === "ollama") return pick("cli") || pick("ollama") || { provider: "mock", model: null, reason: `Ollama is not available (${d.cli.error || d.ollama.error || "no models installed"}); using the rule planner (MOCK MODE)` };
+  if (pref === "localai") return pick("localai") || { provider: "mock", model: null, reason: `localai is not available (${d.localai.error || "no models installed"}); using the rule planner (MOCK MODE)` };
+  return pick("cli") || pick("ollama") || pick("localai") || { provider: "mock", model: null, reason: `no local model found (Ollama: ${d.cli.error || d.ollama.error || "no models"}; LocalAI: ${d.localai.error || "no models"}); using the rule planner (MOCK MODE)` };
 }
 
 function systemPrompt(tools, language) {
@@ -95,10 +120,62 @@ function extractJson(text) {
   return JSON.parse(s.slice(a, b + 1));
 }
 
-async function modelPlan(cfg, { provider, model }, command, tools, { signal } = {}) {
+/**
+ * The first words of the answer, out of a JSON reply that is still arriving.
+ *
+ * The model is asked for {"message": ..., "actions": [...]}, and "message" is
+ * written first — so the sentence a person reads can be shown while the actions
+ * are still being generated. This pulls it out of a half-finished object, with
+ * the JSON string escapes undone, and returns null until there is something
+ * worth showing.
+ */
+function partialMessage(text) {
+  const m = /"message"\s*:\s*"/.exec(String(text || ""));
+  if (!m) return null;
+  let out = "";
+  for (let i = m.index + m[0].length; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\") {
+      const next = text[i + 1];
+      if (next === undefined) break;
+      out += next === "n" ? "\n" : next === "t" ? "\t" : next === "u" ? "" : next;
+      if (next === "u") i += 4;
+      i += 1;
+      continue;
+    }
+    if (c === '"') return out.trim() || null; // the whole message has arrived
+    out += c;
+  }
+  // Still being written: only worth showing once it is a few words.
+  return out.trim().length >= 12 ? out.trim() : null;
+}
+
+async function modelPlan(cfg, { provider, model, binary }, command, tools, { signal, onPartial } = {}) {
   const sys = systemPrompt(tools, cfg.language);
   let content;
-  if (provider === "ollama") {
+  if (provider === "cli") {
+    // The program, on stdin, streamed back. Nothing over the network at all.
+    let shown = "";
+    const r = await cli.askCompat({
+      binary,
+      model,
+      json: true,
+      timeoutMs: cfg.ai.timeoutMs,
+      signal,
+      prompt: `${sys}\n\nUser: ${command}`,
+      onToken: onPartial
+        ? (_chunk, all) => {
+            const msg = partialMessage(all);
+            // Only ever forward more text, never a shorter or repeated line.
+            if (msg && msg.length > shown.length) {
+              shown = msg;
+              onPartial(msg);
+            }
+          }
+        : undefined,
+    });
+    content = r.text;
+  } else if (provider === "ollama") {
     const base = assertPrivate(cfg.ai.ollamaUrl);
     const r = await fetchJson(`${base}/api/chat`, { method: "POST", timeoutMs: cfg.ai.timeoutMs, signal, body: { model, stream: false, format: "json", options: { temperature: 0.1 }, messages: [{ role: "system", content: sys }, { role: "user", content: command }] } });
     if (!r.ok) throw new Error(`Ollama returned HTTP ${r.status}: ${(r.json && r.json.error) || r.text.slice(0, 200)}`);
@@ -117,7 +194,11 @@ async function modelPlan(cfg, { provider, model }, command, tools, { signal } = 
 }
 
 // Free-form generation (drafts, project files). Returns a string.
-async function generate(cfg, { provider, model }, system, prompt, { signal, json = false } = {}) {
+async function generate(cfg, { provider, model, binary }, system, prompt, { signal, json = false, onPartial } = {}) {
+  if (provider === "cli") {
+    const r = await cli.askCompat({ binary, model, json, timeoutMs: cfg.ai.timeoutMs, signal, prompt: `${system}\n\n${prompt}`, onToken: onPartial ? (chunk) => onPartial(chunk) : undefined });
+    return r.text;
+  }
   if (provider === "ollama") {
     const base = assertPrivate(cfg.ai.ollamaUrl);
     const r = await fetchJson(`${base}/api/chat`, { method: "POST", timeoutMs: cfg.ai.timeoutMs, signal, body: { model, stream: false, ...(json ? { format: "json" } : {}), options: { temperature: 0.3 }, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] } });
@@ -132,4 +213,6 @@ async function generate(cfg, { provider, model }, system, prompt, { signal, json
 
 function resetCache() { cache = { at: 0, result: null }; }
 
-module.exports = { detect, resolve, modelPlan, generate, extractJson, systemPrompt, resetCache, CAPABILITY_WARNING };
+function resetAll() { resetCache(); cli.resetCache(); }
+
+module.exports = { detect, resolve, modelPlan, generate, extractJson, partialMessage, systemPrompt, resetCache: resetAll, cli, CAPABILITY_WARNING };

@@ -59,7 +59,15 @@ class Server {
       const command = String(params.command || "").trim();
       if (!command) throw httpError(400, "command is required");
       if (command.length > 4000) throw httpError(400, "command is too long");
-      const plan = await A.executor.plan(command, { device, session, forceMock: !!params.force_mock });
+      // The window names each request, so the words that stream back while
+      // the model is still writing land on the right line and never on an
+      // older one. Only the device that asked is told; nobody else's screen
+      // fills with half a sentence meant for someone else.
+      const requestId = typeof params.request_id === "string" ? params.request_id.slice(0, 64) : null;
+      const onPartial = requestId
+        ? (message) => { A.emit("event", { type: "plan_progress", at: Date.now(), request_id: requestId, device_id: device?.id ?? null, message }); }
+        : undefined;
+      const plan = await A.executor.plan(command, { device, session, forceMock: !!params.force_mock, onPartial });
       return { plan: A.executor.publicPlan(plan) };
     });
     r("plans/pending", async () => ({ plans: A.executor.pendingPlans() }));
