@@ -13,10 +13,14 @@ export function ActivityLog() {
   const clearLog = useJarvis((s) => s.clearLog);
   const job = useJarvis((s) => s.activeJob);
   const connection = useJarvis((s) => s.connection);
-  const endRef = useRef<HTMLLIElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
 
+  // Scroll the list itself, never the page around it: scrollIntoView would
+  // also drag every scrollable ancestor — the whole command centre — down to
+  // the feed on each new line.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [log.length]);
 
   const running = job && (job.status === "running" || job.status === "queued");
@@ -47,7 +51,7 @@ export function ActivityLog() {
               : "Waiting for the agent."}
         </p>
       ) : (
-        <ol className="log-list" aria-live="polite" aria-relevant="additions">
+        <ol className="log-list" aria-live="polite" aria-relevant="additions" ref={listRef}>
           {log.map((e) => (
             <li key={e.id} className="log-item" data-kind={e.kind}>
               <span className="bar" aria-hidden="true" />
@@ -66,7 +70,6 @@ export function ActivityLog() {
               </div>
             </li>
           ))}
-          <li ref={endRef} aria-hidden="true" />
         </ol>
       )}
     </aside>

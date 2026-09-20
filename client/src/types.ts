@@ -247,9 +247,17 @@ export interface AiProvider {
   error: string | null;
 }
 
+/** The Ollama program itself, run directly (no socket, no key). */
+export interface AiCli {
+  binary: string | null;
+  available: boolean;
+  models: string[];
+  error: string | null;
+}
+
 export interface AiStatus {
-  detected: { ollama: AiProvider; localai: AiProvider };
-  active: { provider: "ollama" | "localai" | "mock"; model: string | null; reason: string };
+  detected: { ollama: AiProvider; localai: AiProvider; cli?: AiCli };
+  active: { provider: "cli" | "ollama" | "localai" | "mock"; model: string | null; reason: string; binary?: string };
   mock_mode: boolean;
   capability_warning: string;
   settings: Settings["ai"];
@@ -358,6 +366,17 @@ export interface ProjectInfo {
   template: string;
   created_at: number | null;
   path: string;
+}
+
+export interface MemoryNote {
+  id: string;
+  text: string;
+  at: string;
+}
+
+export interface MemorySummary {
+  notes: { count: number; recent: MemoryNote[] };
+  reminders: { count: number; next: Reminder[] };
 }
 
 export interface Reminder {

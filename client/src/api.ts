@@ -1,6 +1,6 @@
 import { AgentApi } from "./lib/protocol";
 import { AgentError } from "./lib/protocol";
-import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus } from "./types";
+import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus, MemorySummary } from "./types";
 
 export const agentApi = new AgentApi("");
 
@@ -26,6 +26,7 @@ export const api = {
   setToolPolicy: (tool: string, policy: PolicyValue | "default") => agentApi.call<Ok<{ tools: ToolInfo[] }>>("tools/policy", { tool, policy }),
   apps: () => agentApi.call<Ok<{ apps: AppInfo[] }>>("apps/list"),
   systemStatus: () => agentApi.call<Ok<SystemStatus>>("system/status", {}, { timeoutMs: 25000 }),
+  memorySummary: () => agentApi.call<Ok<MemorySummary>>("memory/summary"),
   aiDetect: (force = false) => agentApi.call<Ok<AiStatus>>("ai/detect", { force }, { timeoutMs: 20000 }),
   devices: () => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/list"),
   pairCode: () => agentApi.call<Ok<PairCode>>("devices/pair-code"),

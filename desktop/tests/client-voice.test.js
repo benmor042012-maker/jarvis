@@ -52,9 +52,12 @@ test("speaking uses only voices installed on this computer", () => {
 });
 
 test("the primary surface is voice; typing is a deliberate fallback", () => {
+  // The main screen is the command centre, and its talk bar is the voice bar.
   const app = fs.readFileSync(path.join(SRC, "App.tsx"), "utf8");
-  assert.match(app, /<VoiceBar \/>/);
-  assert.ok(!/<CommandBar \/>/.test(app), "the text box must not be part of the main screen");
+  assert.match(app, /<Dashboard \/>/);
+  const dash = fs.readFileSync(path.join(SRC, "components", "Dashboard.tsx"), "utf8");
+  assert.match(dash, /<VoiceBar \/>/);
+  for (const screen of [app, dash]) assert.ok(!/<CommandBar \/>/.test(screen), "the text box must not be part of the main screen");
   const bar = fs.readFileSync(path.join(SRC, "components", "VoiceBar.tsx"), "utf8");
   assert.match(bar, /\{keyboard && <CommandBar \/>\}/, "typing appears only when it is asked for");
   for (const control of ["Pause microphone", "Mute", "Emergency stop", "Enable microphone"]) {

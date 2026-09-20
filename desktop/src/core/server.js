@@ -109,6 +109,15 @@ class Server {
       return out.data;
     });
 
+    // What JARVIS remembers, for the Memory panel: the notes the "remember"
+    // tool saved and the reminders still to fire. Read from the same two files
+    // the tools write; nothing is summarised by a model.
+    r("memory/summary", async () => {
+      const notes = paths.readJson(paths.MEMORY, []);
+      const reminders = paths.readJson(paths.REMINDERS, []).filter((x) => !x.fired).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      return { notes: { count: notes.length, recent: notes.slice(-8).reverse() }, reminders: { count: reminders.length, next: reminders.slice(0, 8) } };
+    });
+
     r("devices/list", async () => ({ devices: A.devices.list() }));
     r("devices/pair-code", async ({ device }) => { const c = A.devices.createPairCode(); audit.log({ event: "pair_code_created", device: device.name }); return { ...c, urls: A.lanUrls() }; }, { owner: true });
     r("devices/revoke", async ({ params, device }) => {

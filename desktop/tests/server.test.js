@@ -458,3 +458,33 @@ test("the local wake route answers with a usable voice status", async () => {
   const remote = await remoteClient.call("voice/wake", { ms: 900, distance: 2.1 });
   assert.equal(remote.status, 403);
 });
+
+test("the Memory panel reads what the tools really saved, and nothing else", async () => {
+  const paths = require("../src/core/paths");
+  const empty = await ownerClient.call("memory/summary", {});
+  assert.equal(empty.status, 200, JSON.stringify(empty.body));
+  assert.deepEqual(empty.body.notes, { count: 0, recent: [] });
+  assert.deepEqual(empty.body.reminders, { count: 0, next: [] });
+
+  paths.writeJson(paths.MEMORY, [
+    { id: "a", text: "הסיסמה של הוויפי היא על המקרר", at: "2026-09-20T08:00:00.000Z" },
+    { id: "b", text: "פגישה עם דני ביום שלישי", at: "2026-09-20T09:00:00.000Z" },
+  ]);
+  const soon = new Date(Date.now() + 3600000).toISOString();
+  const later = new Date(Date.now() + 7200000).toISOString();
+  paths.writeJson(paths.REMINDERS, [
+    { id: "r2", text: "להתקשר לרופא", at: later, fired: false },
+    { id: "r1", text: "להוציא את הכביסה", at: soon, fired: false },
+    { id: "r0", text: "כבר קרה", at: "2026-01-01T00:00:00.000Z", fired: true },
+  ]);
+  const r = await ownerClient.call("memory/summary", {});
+  assert.equal(r.status, 200);
+  assert.equal(r.body.notes.count, 2);
+  assert.equal(r.body.notes.recent[0].id, "b", "newest note first");
+  assert.equal(r.body.reminders.count, 2, "a reminder that already fired is not pending");
+  assert.deepEqual(r.body.reminders.next.map((x) => x.id), ["r1", "r2"], "soonest reminder first");
+  // A paired phone may read it too: it is the same data the phone can hear
+  // JARVIS say, and nothing in it is a secret JARVIS holds from its owner.
+  const remote = await remoteClient.call("memory/summary", {});
+  assert.equal(remote.status, 200);
+});
