@@ -175,6 +175,28 @@ try {
   check("no text box on the main screen", (await page.locator("#command-input").count()) === 0);
   await page.getByRole("button", { name: "Use keyboard instead" }).click();
   check("typing is available when asked for", await page.isVisible("#command-input"));
+
+  // 1b. A typed command is acknowledged before any model is asked, the line
+  //     says "still working" if nothing has come back after 3.5 s, and the
+  //     answer then replaces that line rather than joining it. The agent
+  //     answers in milliseconds here, so the request is held at the page's
+  //     side for long enough for each state to be seen.
+  const ackRe = /קיבלתי, אני בודק|Got it, checking/;
+  const stillRe = /אני עדיין מעבד אותה|Still working on it/;
+  await page.route("**/api/command", async (route) => { await sleep(4300); await route.continue(); });
+  const logText = async () => (await page.textContent("body")) || "";
+  await page.fill("#command-input", "מה השעה");
+  await page.press("#command-input", "Enter");
+  await sleep(150);
+  let shown = await logText();
+  check("a typed command is acknowledged at once, before the agent has answered", ackRe.test(shown) && !stillRe.test(shown), shown.slice(-200));
+  await sleep(3700);
+  shown = await logText();
+  check("after 3.5 s without an answer the line says it is still working", stillRe.test(shown) && !ackRe.test(shown), shown.slice(-200));
+  await until("the answer to replace the waiting line", async () => { const t = await logText(); return !stillRe.test(t) && !ackRe.test(t); }, 10000);
+  check("the answer replaces the waiting line instead of adding to it", true);
+  check("the command was sent once, not twice", (await page.locator(".log-item[data-kind=\"user\"]").count()) === 1, String(await page.locator(".log-item[data-kind=\"user\"]").count()));
+  await page.unroute("**/api/command");
   await page.getByRole("button", { name: "Hide keyboard" }).click();
 
   // 2. The permission screen comes before the microphone is ever opened.

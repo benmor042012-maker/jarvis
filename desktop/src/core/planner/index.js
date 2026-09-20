@@ -5,13 +5,13 @@ const { rulePlan } = require("./rules");
 const local = require("./local-model");
 const { catalog } = require("../tools/apps");
 
-async function planCommand(command, { cfg, registry, signal, forceMock = false }) {
+async function planCommand(command, { cfg, registry, signal, forceMock = false, onPartial }) {
   const ctx = { apps: catalog(cfg).filter((a) => a.available) };
   let raw, provider = "mock", model = null, notes = [];
   const resolved = forceMock ? { provider: "mock", reason: "forced" } : await local.resolve(cfg);
   if (resolved.provider !== "mock") {
     try {
-      raw = await local.modelPlan(cfg, resolved, command, registry.list({ cfg }).filter((t) => t.availability.ok), { signal });
+      raw = await local.modelPlan(cfg, resolved, command, registry.list({ cfg }).filter((t) => t.availability.ok), { signal, onPartial });
       provider = resolved.provider;
       model = resolved.model;
     } catch (e) {

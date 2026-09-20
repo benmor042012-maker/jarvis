@@ -107,7 +107,8 @@ interface JarvisState {
   callOpen: string | null;
   phone: PhoneCapabilities | null;
 
-  addLog: (kind: LogKind, text: string, detail?: string) => void;
+  addLog: (kind: LogKind, text: string, detail?: string) => string;
+  updateLog: (id: string, text: string, detail?: string) => void;
   clearLog: () => void;
   setPanel: (p: Panel) => void;
   setOrb: (orb: OrbState, text?: string) => void;
@@ -161,6 +162,25 @@ let idCounter = 0;
 const nextId = () => `${String(Date.now())}-${String(++idCounter)}`;
 let flashTimer: number | undefined;
 let inflight: AbortController | null = null;
+// The command being answered right now: which line on screen is its answer,
+// and whether the model has said anything yet. Named per request, so words
+// that stream in for an old command can never land on a new one.
+let answering: { requestId: string; logId: string; gotText: boolean; timer: number | null } | null = null;
+
+// What the window says the instant a command is sent — before any model is
+// asked anything — and what it says if the model has been quiet for 3.5 s.
+const ACK = { he: "קיבלתי, אני בודק…", en: "Got it, checking…" };
+const STILL = { he: "קיבלתי את הבקשה. אני עדיין מעבד אותה ואעדכן אותך מיד.", en: "Got the request. Still working on it — I'll update you in a moment." };
+const STILL_AFTER_MS = 3500;
+
+function newRequestId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function endAnswering(): void {
+  if (answering?.timer !== null && answering?.timer !== undefined) window.clearTimeout(answering.timer);
+  answering = null;
+}
 let events: EventSource | null = null;
 let backoff = 1000;
 let reconnectTimer: number | undefined;
@@ -211,7 +231,12 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   phone: null,
 
   addLog: (kind, text, detail) => {
-    set((s) => ({ log: [...s.log.slice(-299), { id: nextId(), kind, text, at: Date.now(), ...(detail ? { detail } : {}) }] }));
+    const id = nextId();
+    set((s) => ({ log: [...s.log.slice(-299), { id, kind, text, at: Date.now(), ...(detail ? { detail } : {}) }] }));
+    return id;
+  },
+  updateLog: (id, text, detail) => {
+    set((s) => ({ log: s.log.map((l) => (l.id === id ? { ...l, text, ...(detail !== undefined ? { detail } : {}) } : l)) }));
   },
   clearLog: () => {
     set({ log: [] });
@@ -297,14 +322,29 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     }
     inflight?.abort();
     inflight = new AbortController();
+    endAnswering();
     set({ busy: true });
     addLog("user", text);
     setOrb("thinking");
+    // Acknowledged at once, with no model involved: the line the answer will
+    // replace. If the model has said nothing after 3.5 s the line says so,
+    // and if it has, that message is never shown.
+    const he = (get().settings?.language ?? "he") === "he";
+    const requestId = newRequestId();
+    const logId = addLog("assistant", he ? ACK.he : ACK.en);
+    const timer = window.setTimeout(() => {
+      if (answering?.requestId === requestId && !answering.gotText) get().updateLog(logId, he ? STILL.he : STILL.en);
+    }, STILL_AFTER_MS);
+    answering = { requestId, logId, gotText: false, timer };
     try {
-      const { plan } = await api.command(text, inflight.signal);
+      const { plan } = await api.command(text, inflight.signal, requestId);
       set({ lastPlan: plan, lastSeen: Date.now() });
       const provider = plan.mock ? "rule planner · MOCK MODE" : `${plan.provider}${plan.model ? " · " + plan.model : ""}`;
-      addLog("assistant", plan.message, plan.notes.length ? plan.notes.join("\n") : undefined);
+      // The final answer lands on the line that has been showing its first
+      // words, rather than under it.
+      if (answering?.requestId === requestId) get().updateLog(logId, plan.message, plan.notes.length ? plan.notes.join("\n") : undefined);
+      else addLog("assistant", plan.message, plan.notes.length ? plan.notes.join("\n") : undefined);
+      endAnswering();
       // Notices like "no local model installed" are true every time; say them once.
       for (const note of plan.notes) {
         if (!get().log.some((l) => l.kind === "warn" && l.text === note)) addLog("warn", note);
@@ -331,8 +371,10 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       await get().runPlan(plan);
     } catch (err) {
       set({ busy: false });
+      // Whatever went wrong, the "checking…" line is over.
+      if (answering?.requestId === requestId) get().updateLog(logId, err instanceof AgentError && err.kind === "cancelled" ? (he ? "בוטל." : "Cancelled.") : describeError(err));
+      endAnswering();
       if (err instanceof AgentError && err.kind === "cancelled") {
-        addLog("system", "Cancelled.");
         deriveOrb();
         return;
       }
@@ -1105,6 +1147,16 @@ function onEvent(ev: AgentEvent): void {
       useJarvis.setState({ status: ev.status, connection: "online" });
       if (ev.status.emergency && !wasEmergency) s.addLog("warn", `EMERGENCY STOP active (source: ${ev.status.emergency_source ?? "unknown"}). No actions will run until it is cleared on the computer.`);
       deriveOrb();
+      break;
+    }
+    case "plan_progress": {
+      // The model's first words, for the command this window is waiting on and
+      // no other: a stale request's stream is dropped on the floor.
+      if (answering && answering.requestId === ev.request_id && ev.message) {
+        answering.gotText = true;
+        if (answering.timer !== null) { window.clearTimeout(answering.timer); answering.timer = null; }
+        s.updateLog(answering.logId, ev.message);
+      }
       break;
     }
     case "plan": {

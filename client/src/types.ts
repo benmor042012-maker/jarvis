@@ -247,9 +247,17 @@ export interface AiProvider {
   error: string | null;
 }
 
+/** The Ollama program itself, run directly (no socket, no key). */
+export interface AiCli {
+  binary: string | null;
+  available: boolean;
+  models: string[];
+  error: string | null;
+}
+
 export interface AiStatus {
-  detected: { ollama: AiProvider; localai: AiProvider };
-  active: { provider: "ollama" | "localai" | "mock"; model: string | null; reason: string };
+  detected: { ollama: AiProvider; localai: AiProvider; cli?: AiCli };
+  active: { provider: "cli" | "ollama" | "localai" | "mock"; model: string | null; reason: string; binary?: string };
   mock_mode: boolean;
   capability_warning: string;
   settings: Settings["ai"];
@@ -360,6 +368,17 @@ export interface ProjectInfo {
   path: string;
 }
 
+export interface MemoryNote {
+  id: string;
+  text: string;
+  at: string;
+}
+
+export interface MemorySummary {
+  notes: { count: number; recent: MemoryNote[] };
+  reminders: { count: number; next: Reminder[] };
+}
+
 export interface Reminder {
   id: string;
   text: string;
@@ -378,7 +397,9 @@ export type AgentEvent =
   | { type: "voice_state"; at: number; state: VoiceState; reason: string | null }
   | { type: "voice"; at: number; event: "woke" | "stopped" | "command"; phrase?: string; text?: string; until?: number; plan_id?: string | null }
   | { type: "alert"; at: number; alert: CustomerAlert }
-  | { type: "call"; at: number; call: CallRequest };
+  | { type: "call"; at: number; call: CallRequest }
+  /** The first words of an answer, while the model is still writing the rest. */
+  | { type: "plan_progress"; at: number; request_id: string; device_id: string | null; message: string };
 
 // --- voice -----------------------------------------------------------------
 

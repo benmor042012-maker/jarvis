@@ -59,7 +59,15 @@ class Server {
       const command = String(params.command || "").trim();
       if (!command) throw httpError(400, "command is required");
       if (command.length > 4000) throw httpError(400, "command is too long");
-      const plan = await A.executor.plan(command, { device, session, forceMock: !!params.force_mock });
+      // The window names each request, so the words that stream back while
+      // the model is still writing land on the right line and never on an
+      // older one. Only the device that asked is told; nobody else's screen
+      // fills with half a sentence meant for someone else.
+      const requestId = typeof params.request_id === "string" ? params.request_id.slice(0, 64) : null;
+      const onPartial = requestId
+        ? (message) => { A.emit("event", { type: "plan_progress", at: Date.now(), request_id: requestId, device_id: device?.id ?? null, message }); }
+        : undefined;
+      const plan = await A.executor.plan(command, { device, session, forceMock: !!params.force_mock, onPartial });
       return { plan: A.executor.publicPlan(plan) };
     });
     r("plans/pending", async () => ({ plans: A.executor.pendingPlans() }));
@@ -99,6 +107,15 @@ class Server {
       const tool = A.registry.get("system_status");
       const out = await tool.run({}, { cfg: A.cfg(), signal: new AbortController().signal });
       return out.data;
+    });
+
+    // What JARVIS remembers, for the Memory panel: the notes the "remember"
+    // tool saved and the reminders still to fire. Read from the same two files
+    // the tools write; nothing is summarised by a model.
+    r("memory/summary", async () => {
+      const notes = paths.readJson(paths.MEMORY, []);
+      const reminders = paths.readJson(paths.REMINDERS, []).filter((x) => !x.fired).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      return { notes: { count: notes.length, recent: notes.slice(-8).reverse() }, reminders: { count: reminders.length, next: reminders.slice(0, 8) } };
     });
 
     r("devices/list", async () => ({ devices: A.devices.list() }));

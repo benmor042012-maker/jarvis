@@ -100,7 +100,9 @@ export function StatusPanel() {
             </p>
             {!ai.mock_mode && <p className="help">⚠ {ai.capability_warning}</p>}
             <dl className="kv">
-              <dt>Ollama</dt>
+              <dt>Ollama program</dt>
+              <dd>{ai.detected.cli?.available ? `${String(ai.detected.cli.models.length)} model(s): ${ai.detected.cli.models.join(", ")} · run directly, no socket` : `not available — ${ai.detected.cli?.error ?? "unknown"}`}</dd>
+              <dt>Ollama server</dt>
               <dd>{ai.detected.ollama.available ? `${String(ai.detected.ollama.models.length)} model(s): ${ai.detected.ollama.models.join(", ")}` : `not available — ${ai.detected.ollama.error ?? "unknown"}`}</dd>
               <dt>LocalAI</dt>
               <dd>{ai.detected.localai.available ? `${String(ai.detected.localai.models.length)} model(s): ${ai.detected.localai.models.join(", ")}` : `not available — ${ai.detected.localai.error ?? "unknown"}`}</dd>

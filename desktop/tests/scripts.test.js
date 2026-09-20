@@ -336,3 +336,24 @@ test("a pinned model is used as configured, not promoted to the heavier one besi
   assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny } }), [small, tiny]);
   assert.deepEqual(stt.modelCandidates({ voice: { whisperModel: tiny, modelPinned: true } }), [tiny]);
 });
+
+test("the local-AI installer looks for the Ollama program, not only for the name on PATH", () => {
+  // The loop this breaks, seen on a real machine: winget installs Ollama, the
+  // window that ran the installer cannot see it (PATH is read when a terminal
+  // opens), so the script offers to install it again — and winget then refuses
+  // outright, because the Ollama it installed is now running and holding the
+  // file ("0x80070020: the file is being used by another process"). Install,
+  // "not on PATH", install, refused, for ever.
+  const text = fs.readFileSync(path.join(SCRIPTS, "install-ai.mjs"), "utf8");
+  assert.match(text, /function ollamaBinary/);
+  // The Windows installer's own location, which is where it will be when PATH
+  // has not caught up.
+  assert.match(text, /LOCALAPPDATA/);
+  assert.match(text, /Programs["'\s,)]+.*Ollama/);
+  // And the program that was found is the one used, rather than the bare name.
+  assert.match(text, /runSync\(ollama, \["pull"/);
+  assert.match(text, /runSync\(ollama, \["show"/);
+  assert.ok(!/runSync\("ollama"/.test(text), "nothing should call it by name only any more");
+  // The wording no longer sends someone to PATH when the program is right there.
+  assert.ok(!/not on PATH in this window/.test(text));
+});

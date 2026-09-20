@@ -7,8 +7,10 @@
 // A local model is what lets you phrase things freely instead of using set
 // commands. Nothing here needs an account, a key or a payment, and no prompt
 // ever leaves the machine.
+import fs from "node:fs";
 import { createInterface } from "node:readline/promises";
 import os from "node:os";
+import path from "node:path";
 
 import { runSync, WIN } from "./spawn-compat.mjs";
 
@@ -48,6 +50,39 @@ function have(cmd) {
   return r.status === 0;
 }
 
+/**
+ * Where Ollama really is.
+ *
+ * The Windows installer puts it in the user's own programs folder and adds it
+ * to PATH — but PATH is read when a terminal opens, so the window that ran the
+ * installer, and any window opened before it finished, will never see it.
+ * Worse, winget refuses to run at all while an installed Ollama is running
+ * ("0x80070020: the file is being used by another process"), so the installer
+ * appears to fail on a machine where it is already there. The result is a loop:
+ * install, "not on PATH", install again, refused.
+ *
+ * So look for the program itself, not only for the name.
+ */
+function ollamaBinary() {
+  if (have("ollama")) return "ollama";
+  const home = os.homedir();
+  const candidates = WIN
+    ? [
+        path.join(process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Programs", "Ollama", "ollama.exe"),
+        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Ollama", "ollama.exe"),
+        path.join(home, "AppData", "Local", "Ollama", "ollama.exe"),
+      ]
+    : ["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama", "/usr/bin/ollama", path.join(home, ".local", "bin", "ollama")];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c) && runSync(c, ["--version"], { stdio: "ignore" }).status === 0) return c;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return null;
+}
+
 function ask(rl, q) {
   return process.stdin.isTTY ? rl.question(q) : Promise.resolve("n");
 }
@@ -60,18 +95,23 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 try {
   // 1. Is Ollama installed?
-  if (!have("ollama")) {
+  let ollama = ollamaBinary();
+  if (!ollama) {
     warn("Ollama is not installed. It is the free, open-source runner for local models.");
     if (WIN && have("winget")) {
       const a = await ask(rl, `Install it now with winget? ${C.dim}(about 700 MB, no account needed)${C.r} [y/N] `);
       if (a.trim().toLowerCase().startsWith("y")) {
         say("Installing Ollama…");
         runSync("winget", ["install", "--id", "Ollama.Ollama", "-e", "--accept-package-agreements", "--accept-source-agreements"], { stdio: "inherit" });
-        if (!have("ollama")) {
-          warn("Installed, but not on PATH in this window yet. Close this terminal, open a new one, and run `npm run ai` again.");
+        // Look for the program, not for the name: PATH in this window was read
+        // before the installer ran, and winget refuses outright when an already
+        // installed Ollama is running.
+        ollama = ollamaBinary();
+        if (!ollama) {
+          warn("Installed, but this window cannot see it yet. Close this terminal, open a new one, and run `npm run ai` again.");
           process.exit(0);
         }
-        ok("Ollama installed.");
+        ok(`Ollama installed: ${ollama}`);
       } else {
         console.log(`\n  Install it yourself from ${C.c}https://ollama.com/download${C.r}, then run ${C.b}npm run ai${C.r} again.\n`);
         process.exit(0);
@@ -84,7 +124,7 @@ try {
       process.exit(0);
     }
   } else {
-    ok("Ollama is installed.");
+    ok(`Ollama is installed: ${ollama}`);
   }
 
   // 2. Is it running?
@@ -132,14 +172,14 @@ try {
   }
   const chosen = choices[(Number(pick) || 1) - 1] ?? choices[0];
   say(`Downloading ${chosen.id} (${chosen.size}). This is the only big download, and it is free.`);
-  const pull = runSync("ollama", ["pull", chosen.id], { stdio: "inherit" });
+  const pull = runSync(ollama, ["pull", chosen.id], { stdio: "inherit" });
   if (pull.status !== 0) {
     bad(`The download failed. Check your internet connection and run \`npm run ai\` again.`);
     process.exit(1);
   }
   ok(`${chosen.id} is ready.`);
 
-  const show = runSync("ollama", ["show", chosen.id], { encoding: "utf8" });
+  const show = runSync(ollama, ["show", chosen.id], { encoding: "utf8" });
   const licence = /License\s*\n?\s*(.+)/i.exec(show.stdout ?? "");
   if (licence) console.log(`${C.dim}  Licence as reported by Ollama: ${licence[1].trim().slice(0, 80)} — read it before commercial use.${C.r}`);
 

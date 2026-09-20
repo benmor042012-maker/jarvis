@@ -291,7 +291,21 @@ async function detect(cfg, { force = false } = {}) {
     const bare = binCandidates.find((p) => !p.includes(path.sep));
     if (bare && (await onPath(bare))) binary = bare;
   }
-  const model = firstExisting(modCandidates);
+  let model = firstExisting(modCandidates);
+
+  // A damaged model with a working one beside it: use the working one, and
+  // say so. The microphone going dead because one download was cut short,
+  // while a good model sits in the same folder, is not a state worth showing.
+  if (binary && model && !isModelFile(model)) {
+    const dir = path.dirname(model);
+    const others = ["ggml-small.bin", "ggml-large-v3-turbo.bin", "ggml-medium.bin", "ggml-base.bin", "ggml-tiny.bin"]
+      .map((n) => path.join(dir, n))
+      .filter((f) => f !== model && isModelFile(f));
+    if (others.length) {
+      result.checked.damaged = path.basename(model);
+      model = others[0];
+    }
+  }
 
   if (binary && model && !isModelFile(model)) {
     // Caught here rather than at the first sentence: the engine's own words for

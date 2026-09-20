@@ -1,6 +1,6 @@
 import { AgentApi } from "./lib/protocol";
 import { AgentError } from "./lib/protocol";
-import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus } from "./types";
+import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus, MemorySummary } from "./types";
 
 export const agentApi = new AgentApi("");
 
@@ -8,7 +8,8 @@ type Ok<T> = { ok: true; request_id: string } & T;
 
 export const api = {
   status: () => agentApi.call<Ok<Status>>("status"),
-  command: (command: string, signal?: AbortSignal) => agentApi.call<Ok<{ plan: Plan }>>("command", { command }, { timeoutMs: 180000, ...(signal ? { signal } : {}) }),
+  command: (command: string, signal?: AbortSignal, requestId?: string) =>
+    agentApi.call<Ok<{ plan: Plan }>>("command", { command, ...(requestId ? { request_id: requestId } : {}) }, { timeoutMs: 180000, ...(signal ? { signal } : {}) }),
   pendingPlans: () => agentApi.call<Ok<{ plans: Plan[] }>>("plans/pending"),
   approvePlan: (plan_id: string, actions_hash: string, decision: "approve" | "reject", scope: "once" | "task") =>
     agentApi.call<Ok<{ plan: Plan; job?: Job }>>("plans/approve", { plan_id, actions_hash, decision, scope }, { timeoutMs: 180000 }),
@@ -25,6 +26,7 @@ export const api = {
   setToolPolicy: (tool: string, policy: PolicyValue | "default") => agentApi.call<Ok<{ tools: ToolInfo[] }>>("tools/policy", { tool, policy }),
   apps: () => agentApi.call<Ok<{ apps: AppInfo[] }>>("apps/list"),
   systemStatus: () => agentApi.call<Ok<SystemStatus>>("system/status", {}, { timeoutMs: 25000 }),
+  memorySummary: () => agentApi.call<Ok<MemorySummary>>("memory/summary"),
   aiDetect: (force = false) => agentApi.call<Ok<AiStatus>>("ai/detect", { force }, { timeoutMs: 20000 }),
   devices: () => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/list"),
   pairCode: () => agentApi.call<Ok<PairCode>>("devices/pair-code"),
