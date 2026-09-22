@@ -63,6 +63,12 @@ npm run voice
 בלבד (יש כפתור *Hear this voice* כדי לשמוע). קול עברי חינמי מוסיפים ב-Windows:
 Settings → Time & language → Speech → Manage voices.
 
+**שני רכיבים אופציונליים ב-[`voice-extras/`](voice-extras/README.md):** שירות רקע שמאזין
+ל-"Hey Jarvis" גם כשג'רביס סגור (openwakeword — מקומי, חינמי, שום דבר לא יוצא מהמחשב),
+וקול ניוראלי של Edge שנשמע אנושי בהרבה (edge-tts — חינמי וללא חשבון, **אבל** הטקסט שהוא
+אומר נשלח למיקרוסופט וצריך אינטרנט). שניהם כבויים כברירת מחדל ושום קובץ בפרויקט לא
+מייבא אותם, כדי שההבטחה שלמעלה — ששום דבר לא יוצא מהמחשב — תישאר נכונה למה שמותקן.
+
 **אם הוא איטי אצלכם — פקודה אחת:**
 
 ```
@@ -103,6 +109,13 @@ Three pieces, all on your machine:
 
 The GitHub Pages site is documentation only. Browsers block page access to files, mouse and
 keyboard; that is a browser security guarantee and nothing can work around it.
+
+Plus one optional, separate folder: [`voice-extras/`](voice-extras/README.md) — a background
+openWakeWord service that hears "Hey Jarvis" even when JARVIS is closed (local, free, nothing
+leaves the machine), and the Edge neural voices via edge-tts, which sound far more human but
+send the spoken text to Microsoft and need an internet connection. Both are off by default and
+nothing in `client/` or `desktop/` imports them, so the sentence at the top of this file stays
+true of what is installed.
 
 ## What it can do
 
