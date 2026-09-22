@@ -1,0 +1,34 @@
+{
+  "_comment": "Copy this to config.json and edit. Every value is optional; anything left out uses the default in jarvis_link.py DEFAULTS.",
+
+  "wake": {
+    "model": "hey_jarvis",
+    "threshold": 0.5,
+    "cooldown_seconds": 3.0,
+    "frames_to_trigger": 1,
+    "inference_framework": "onnx",
+    "input_device": null,
+    "quiet_hours": { "enabled": false, "start": "23:00", "end": "07:00" },
+    "command": [],
+    "post": null,
+    "launch": true
+  },
+
+  "tts": {
+    "voice": "he-IL-AvriNeural",
+    "fallback_voice": "en-US-BrianNeural",
+    "rate": "+0%",
+    "volume": "+0%",
+    "pitch": "+0Hz",
+    "serve_port": 8771,
+    "first_chunk_chars": 60
+  },
+
+  "agent": {
+    "host": "127.0.0.1",
+    "port": null,
+    "timeout_seconds": 4.0
+  },
+
+  "log_level": "INFO"
+}

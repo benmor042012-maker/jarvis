@@ -4,3 +4,8 @@ client/dist/
 desktop/dist/
 *.log
 .DS_Store
+
+# voice-extras (Python)
+__pycache__/
+*.pyc
+voice-extras/config.json

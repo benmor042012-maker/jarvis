@@ -1,0 +1,9 @@
+# The wake-word service — runs entirely on this computer.
+openwakeword>=0.6.0        # the wake-word models (Apache-2.0, free)
+onnxruntime>=1.16.0        # runs them on the CPU; ~20 MB, no GPU needed
+sounddevice>=0.4.6         # reads the microphone
+numpy>=1.24                # openwakeword works on numpy frames
+
+# The voice — free of charge, but the text is sent to Microsoft to be spoken.
+edge-tts>=6.1.10           # Microsoft Edge neural voices, no account, no key
+miniaudio>=1.59            # decodes and plays the stream as it arrives
