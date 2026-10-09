@@ -1,6 +1,6 @@
 import { AgentApi } from "./lib/protocol";
 import { AgentError } from "./lib/protocol";
-import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus, MemorySummary } from "./types";
+import type { AiStatus, AppInfo, AuditEntry, CallRequest, Customer, CustomerAlert, DeviceInfo, Draft, DraftTemplate, Job, PairCode, PhoneCapabilities, Plan, PolicyValue, ProjectInfo, ProjectTask, ProjectTemplate, Settings, SettingsUpdate, SpeechEngineInstall, Status, ToolInfo, UtteranceResult, VoiceHistoryEntry, VoiceStatus, SystemStatus, MemorySummary, CloudView, CustomerAnswer, Knowledge, WebhookApp, WebhookInfo, WriteKind, WriteResult } from "./types";
 
 export const agentApi = new AgentApi("");
 
@@ -26,6 +26,19 @@ export const api = {
   setToolPolicy: (tool: string, policy: PolicyValue | "default") => agentApi.call<Ok<{ tools: ToolInfo[] }>>("tools/policy", { tool, policy }),
   apps: () => agentApi.call<Ok<{ apps: AppInfo[] }>>("apps/list"),
   systemStatus: () => agentApi.call<Ok<SystemStatus>>("system/status", {}, { timeoutMs: 25000 }),
+  // --- connections: Groq, webhooks, the writing agent, the customer desk ------
+  cloudStatus: () => agentApi.call<Ok<CloudView>>("cloud/status"),
+  setGroqKey: (key: string | null) => agentApi.call<Ok<CloudView>>("cloud/groq-key", { key }),
+  testGroq: () => agentApi.call<Ok<{ result: { ok: boolean; models: string[]; error: string | null } }>>("cloud/groq-test", {}, { timeoutMs: 20000 }),
+  saveWebhook: (w: { id?: string; name: string; app: WebhookApp; url?: string }) => agentApi.call<Ok<{ webhook: WebhookInfo; webhooks: WebhookInfo[] }>>("webhooks/save", w),
+  deleteWebhook: (id: string) => agentApi.call<Ok<{ removed: boolean; webhooks: WebhookInfo[] }>>("webhooks/delete", { id }),
+  /** Sends only because a person pressed Send: confirm is always true from here. */
+  sendWebhook: (p: { id: string; title?: string; text?: string; kind?: string; to?: string; test?: boolean }) =>
+    agentApi.call<Ok<{ sent: { ok: boolean; service: string; host: string; connection: string; chars: number } }>>("webhooks/send", { ...p, confirm: true }, { timeoutMs: 25000 }),
+  write: (p: { kind: WriteKind; instructions: string; tone?: string; language?: string }) => agentApi.call<Ok<WriteResult>>("write/generate", p, { timeoutMs: 90000 }),
+  customerAnswer: (message: string) => agentApi.call<Ok<CustomerAnswer>>("customer/answer", { message }, { timeoutMs: 45000 }),
+  knowledge: () => agentApi.call<Ok<{ knowledge: Knowledge }>>("knowledge/get"),
+  saveKnowledge: (knowledge: Knowledge) => agentApi.call<Ok<{ knowledge: Knowledge }>>("knowledge/save", { knowledge }),
   memorySummary: () => agentApi.call<Ok<MemorySummary>>("memory/summary"),
   aiDetect: (force = false) => agentApi.call<Ok<AiStatus>>("ai/detect", { force }, { timeoutMs: 20000 }),
   devices: () => agentApi.call<Ok<{ devices: DeviceInfo[] }>>("devices/list"),

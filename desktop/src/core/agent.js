@@ -19,6 +19,10 @@ const { Server, lanAddresses } = require("./server");
 const audit = require("./audit");
 const procs = require("./procs");
 const local = require("./planner/local-model");
+const isolation = require("./isolation");
+const groq = require("./cloud/groq");
+const webhooks = require("./cloud/webhooks");
+const cloudUsage = require("./cloud/usage");
 const { dueReminders } = require("./tools/info");
 const { nowMs } = require("./util");
 
@@ -167,15 +171,8 @@ class Agent extends EventEmitter {
       offline_mode: !!cfg.offlineMode,
       lan: { enabled: !!cfg.server.lanEnabled, port: this.server.listening?.port || cfg.server.port, addresses: cfg.server.lanEnabled ? lanAddresses() : [] },
       hotkey: this.hotkeyInfo,
-      cost_network: {
-        local_ai_only: true,
-        external_calls: 0,
-        api_keys_configured: 0,
-        payment_configured: false,
-        outgoing_messages: 0,
-        cloud_providers: "not implemented",
-        data_leaving_computer: "none (local model servers on this machine/LAN only)",
-      },
+      isolation: isolation.enabled(cfg),
+      cost_network: this.costNetwork(cfg),
       devices: { connected: connected.length, paired: this.devices.list().filter((d) => !d.revoked).length },
       voice: { state: this.voice.state, enabled: !!cfg.voice?.enabled, microphone: this.voice.micGranted, paused: this.voice.paused, muted: this.voice.muted },
       alerts: { open: this.alerts.list().length, enabled: !!cfg.alerts?.enabled },
@@ -186,6 +183,35 @@ class Agent extends EventEmitter {
       uptime_ms: nowMs() - this.state.startedAt,
       time: nowMs(),
     };
+  }
+
+  /**
+   * What leaves this computer, counted rather than promised. Groq and the
+   * webhooks are the only two ways out, and both are off until you add a key
+   * or a connection yourself.
+   */
+  costNetwork(cfg) {
+    const u = cloudUsage.snapshot();
+    const g = groq.status(cfg);
+    const hooks = webhooks.list().length;
+    const groqOn = g.usable;
+    const leaving = [];
+    if (groqOn) leaving.push("what you ask JARVIS, text you ask it to write, and customer questions go to Groq");
+    if (hooks) leaving.push(`text you press Send on goes to your ${String(hooks)} connection(s)`);
+    return {
+      local_ai_only: !groqOn,
+      external_calls: u.groqCalls + u.webhookSends,
+      api_keys_configured: g.configured ? 1 : 0,
+      payment_configured: false,
+      outgoing_messages: u.webhookSends,
+      cloud_providers: groqOn ? "Groq (free plan — no card, stops at the free limit)" : "none",
+      data_leaving_computer: leaving.length ? leaving.join("; ") : "none (local model servers on this machine/LAN only)",
+    };
+  }
+
+  cloudView() {
+    const cfg = this.cfg();
+    return { isolation: isolation.enabled(cfg), groq: groq.status(cfg), webhooks: webhooks.list(), apps: webhooks.APPS, usage: cloudUsage.snapshot(), offline_mode: !!cfg.offlineMode };
   }
 
   async aiStatus(force) {
@@ -201,7 +227,7 @@ class Agent extends EventEmitter {
   }
 
   updateSettings(partial, device) {
-    const allowed = ["mode", "language", "autoStart", "hotkeys", "server", "offlineMode", "ai", "approvedFolders", "extraApps", "allowedUrlHosts", "toolPolicies", "tts", "voice", "alerts", "phone", "drafts", "contacts", "deviceExpiryDays", "privacy"];
+    const allowed = ["mode", "language", "autoStart", "hotkeys", "server", "offlineMode", "isolation", "groq", "ai", "approvedFolders", "extraApps", "allowedUrlHosts", "toolPolicies", "tts", "voice", "alerts", "phone", "drafts", "contacts", "deviceExpiryDays", "privacy"];
     const clean = {};
     for (const k of allowed) if (partial[k] !== undefined) clean[k] = partial[k];
     if (clean.approvedFolders) {
@@ -222,6 +248,7 @@ class Agent extends EventEmitter {
     local.resetCache();
     stt.resetCache();
     audit.log({ event: "settings_updated", device: device?.name, detail: { fields: Object.keys(clean) } });
+    if (isolation.enabled(before) !== isolation.enabled(cfg)) audit.log({ event: isolation.enabled(cfg) ? "isolation_on" : "isolation_off", device: device?.name });
     if (typeof this.host.onSettingsChanged === "function") { try { this.host.onSettingsChanged(cfg, before); } catch { /* ignore */ } }
     if (before.server.port !== cfg.server.port || before.server.lanEnabled !== cfg.server.lanEnabled) {
       this.restartServer().catch((e) => audit.log({ event: "server_restart_failed", detail: { error: e.message } }));
@@ -272,7 +299,8 @@ class Agent extends EventEmitter {
       customers: this.alerts.customers(),
       alert_history: this.alerts.history(),
       voice_transcripts: this.voice.history,
-      note: "Device secrets, screenshots and project sources are not included; they stay in ~/.jarvis.",
+      customer_knowledge: require("./cloud/knowledge").load(),
+      note: "Device secrets, the Groq key, webhook addresses, screenshots and project sources are not included; they stay in ~/.jarvis.",
     };
   }
 

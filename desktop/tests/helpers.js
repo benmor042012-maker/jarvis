@@ -15,6 +15,12 @@ function isolate() {
   // under test. Point the lookup at nothing; a test that wants a stand-in sets
   // this itself afterwards.
   if (!process.env.JARVIS_OLLAMA_BIN) process.env.JARVIS_OLLAMA_BIN = path.join(home, "no-ollama-here", "ollama");
+  // Most of the suite tests the tools themselves — files, input, shell — so
+  // its homes start with isolation off. cloud.test.js turns it back on to
+  // prove the default holds. A Groq key in the developer's environment must
+  // never reach a test either.
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ isolation: false }));
+  delete process.env.GROQ_API_KEY;
   for (const k of Object.keys(require.cache)) if (k.includes(path.join("desktop", "src"))) delete require.cache[k];
   return home;
 }

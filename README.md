@@ -2,8 +2,13 @@
 
 <p align="center"><img src="docs/screenshot-desktop.png" alt="JARVIS: a dark navy screen with a glowing cyan orb, status READY, a session log and a command bar" width="860"></p>
 
-A **self-contained** local AI assistant that really controls your Windows computer.
-No cloud, no account, no API key, no subscription, no payment — anywhere, ever.
+A **self-contained** local AI assistant for your Windows computer.
+No subscription, no payment — anywhere, ever. Out of the box: no cloud, no account, no API key.
+
+**Isolated by default:** no brain can run programs, shells or scripts or touch your files, input,
+screen, clipboard or browser — only JARVIS's own notes, reminders and drafts. Optional and free:
+Groq as a fast brain, a writing agent, a closed customer desk, and outgoing webhooks to Make for
+Google Docs, Gmail, Sheets and more. See **[docs/CONNECTIONS.md](docs/CONNECTIONS.md)**.
 
 Public page: <https://benmor042012-maker.github.io/jarvis/> (explains and links the download; a web page can never control a computer — the installed agent does).
 
@@ -169,6 +174,16 @@ panel lists what is and is not possible, one line each, with the reason. See
 [Calling, honestly](#calling-honestly).
 
 ## Security model
+
+**Isolation** (on by default, `desktop/src/core/isolation.js`) is an allow-list: only tools that cannot
+touch the computer exist for the planner. It is enforced three times — the model is never told about
+the other tools, a plan naming one has it dropped before any approval screen, and the registry refuses
+a direct call. **Groq** (`cloud/groq.js`) and **webhooks** (`cloud/webhooks.js`) are the only two ways
+out of the computer, both off until you add a key or a connection, and the self-contained scan fails
+the build if either address appears anywhere else. Secrets live in `~/.jarvis/secrets.json` (0600),
+never in settings, exports, the audit log or the window. Sending is an owner-only route that needs
+`confirm: true` — not a tool, so no model and no customer message can reach it.
+
 
 Every command from any device carries a signed envelope:
 

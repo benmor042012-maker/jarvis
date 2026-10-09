@@ -115,6 +115,7 @@ export function SettingsPanel() {
                 <option value="auto">Auto-detect (Ollama, then LocalAI)</option>
                 <option value="ollama">Ollama</option>
                 <option value="localai">LocalAI</option>
+                <option value="groq">Groq (free plan — add the key in Connections)</option>
                 <option value="mock">Rule planner only (MOCK MODE)</option>
               </select>
             </label>

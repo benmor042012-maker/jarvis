@@ -56,6 +56,8 @@ function Sidebar({ tools }: { tools: number | null }) {
     { label: "Workflows", icon: "⇶", panel: "projects" },
   ];
   const more: { label: string; icon: string; panel: Exclude<Panel, null>; badge?: number }[] = [
+    { label: "Writing Agent", icon: "✎", panel: "writer" },
+    { label: "Connections", icon: "⇄", panel: "connections" },
     { label: "Voice", icon: "🎙", panel: "voice" },
     { label: "Customer alerts", icon: "⚠", panel: "alerts", badge: openAlerts },
     { label: "Phone", icon: "☎", panel: "phone" },
@@ -94,7 +96,7 @@ function Sidebar({ tools }: { tools: number | null }) {
       <p className="side-foot">
         {status ? `v${status.version} · ${status.host}` : "—"}
         <br />
-        Local only · no cloud · no keys
+        {status ? `${status.isolation ? "Isolated" : "Not isolated"} · ${status.cost_network.local_ai_only ? "no cloud" : "Groq free"} · ${String(status.cost_network.external_calls)} external` : ""}
       </p>
     </nav>
   );
@@ -362,26 +364,26 @@ export function Dashboard() {
     { name: "Planner", role: "turns what you say into a plan", state: brainLine, tone: !a ? "off" : a.mock_mode ? "warn" : "ok" },
     { name: "Voice agent", role: "wake word, speech to text", state: voiceLine, tone: engine?.available ? "ok" : "warn" },
     { name: "Executor", role: "runs the approved actions", state: running ? `running · ${String(job.completed)}/${String(job.total)}${job.current ? ` · ${job.current.description}` : ""}` : pending.length ? `${String(pending.length)} plan(s) awaiting approval` : "standby", tone: running ? "ok" : pending.length ? "warn" : "off" },
-    { name: "Project builder", role: "builds sites and files from a brief", state: "ready · opens from Tasks", tone: "ok" },
+    { name: "Project builder", role: "builds sites and files from a brief", state: status?.isolation ? "off — isolation is on" : "ready · opens from Tasks", tone: status?.isolation ? "off" : "ok" },
     { name: "Alert watcher", role: "watches customer records locally", state: status ? (status.alerts.enabled ? (openAlerts.length ? `${String(openAlerts.length)} open` : "watching · none open") : "off") : "—", tone: openAlerts.length ? "warn" : status?.alerts.enabled ? "ok" : "off" },
     { name: "System agent", role: "processor, memory, disk, battery", state: s ? `${s.cpu_percent === null ? "—" : `${String(s.cpu_percent)}%`} cpu · ${String(memUsed ?? 0)}% ram` : (sys.error ?? "reading…"), tone: s ? "ok" : "off", check: !!s && (s.cpu_percent ?? 0) < 85 },
   ];
 
   // The provider grid from the reference screen, with the truth in each tile.
-  // The local ones report what was found; the hosted ones are named so nobody
-  // wonders where they went, and each says the exact reason it is not
-  // connected: it needs an account, a key and a bill, and this JARVIS runs
-  // without any of those by design.
-  const CLOUD_REASON = "not connected — needs an account, an API key and per-use billing; this JARVIS is local-only by design";
+  // Groq is the one hosted brain JARVIS supports, on its free plan, once a key
+  // is added; the other hosted ones are named so nobody wonders where they
+  // went, and each says why it is not connected.
+  const CLOUD_REASON = "not supported — needs a paid account and key; Groq is the free option (Connections)";
+  const gq = a?.detected.groq;
   const providers: { name: string; state: string; tone: Tone; hint?: string }[] = a
     ? [
+        { name: "Groq", state: gq?.usable ? `Connected · free · ${gq.model}` : gq?.configured ? `Key added — ${gq.reason ?? "off"}` : "Not connected — add a free key in Connections", tone: gq?.usable ? "ok" : "off" },
         { name: "Ollama", state: cli?.available ? `Connected · ${String(cli.models.length)} model(s)` : a.detected.ollama.available ? `Connected (server) · ${String(a.detected.ollama.models.length)} model(s)` : `Not connected — ${cli?.error ?? "not installed"}`, tone: cli?.available || a.detected.ollama.available ? "ok" : "warn" },
         { name: "LocalAI", state: a.detected.localai.available ? `Connected · ${String(a.detected.localai.models.length)} model(s)` : "Not connected — not installed", tone: a.detected.localai.available ? "ok" : "off" },
         { name: "Rule planner", state: a.mock_mode ? "Answering (MOCK MODE)" : "Fallback · ready", tone: a.mock_mode ? "warn" : "ok" },
         { name: "Claude", state: "Not connected", tone: "off", hint: CLOUD_REASON },
         { name: "OpenAI", state: "Not connected", tone: "off", hint: CLOUD_REASON },
         { name: "Gemini", state: "Not connected", tone: "off", hint: CLOUD_REASON },
-        { name: "Groq", state: "Not connected", tone: "off", hint: CLOUD_REASON },
         { name: "OpenRouter", state: "Not connected", tone: "off", hint: CLOUD_REASON },
         { name: "Copilot", state: "Not connected", tone: "off", hint: CLOUD_REASON },
       ]

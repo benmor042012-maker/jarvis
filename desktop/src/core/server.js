@@ -9,6 +9,11 @@ const { Verifier } = require("./protocol");
 const { redact, isPrivateHost, randomHex, nowMs } = require("./util");
 const audit = require("./audit");
 const paths = require("./paths");
+const groq = require("./cloud/groq");
+const webhooks = require("./cloud/webhooks");
+const writer = require("./cloud/writer");
+const knowledge = require("./cloud/knowledge");
+const local = require("./planner/local-model");
 
 const MAX_BODY = 1024 * 1024;
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json; charset=utf-8", ".woff2": "font/woff2", ".woff": "font/woff", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".webmanifest": "application/manifest+json" };
@@ -118,6 +123,59 @@ class Server {
       return { notes: { count: notes.length, recent: notes.slice(-8).reverse() }, reminders: { count: reminders.length, next: reminders.slice(0, 8) } };
     });
 
+    // --- connections: Groq, webhooks, the writing agent, the customer desk ----
+    // Every route here returns text or a status. None runs a tool, and the
+    // only one that sends anything (webhooks/send) needs confirm: true from
+    // the owner's own window.
+    const cloudErr = (e) => httpError(e.status || 400, "connection_error", e.message);
+    r("cloud/status", async () => A.cloudView());
+    r("cloud/groq-key", async ({ params, device }) => {
+      try { groq.setKey(params.key === null ? null : params.key); } catch (e) { throw cloudErr(e); }
+      local.resetCache();
+      audit.log({ event: params.key ? "groq_key_set" : "groq_key_removed", device: device?.name });
+      A.emit("event", { type: "status", at: Date.now(), status: A.status() });
+      return A.cloudView();
+    }, { owner: true });
+    r("cloud/groq-test", async () => ({ result: await groq.models(A.cfg()) }), { owner: true });
+    r("webhooks/save", async ({ params, device }) => {
+      let saved;
+      try { saved = webhooks.save(params); } catch (e) { throw cloudErr(e); }
+      audit.log({ event: "webhook_saved", device: device?.name, detail: { id: saved.id, name: saved.name, host: saved.host } });
+      return { webhook: saved, webhooks: webhooks.list() };
+    }, { owner: true });
+    r("webhooks/delete", async ({ params, device }) => {
+      const removed = webhooks.remove(String(params.id || ""));
+      audit.log({ event: "webhook_deleted", device: device?.name, detail: { id: String(params.id || "") } });
+      return { removed, webhooks: webhooks.list() };
+    }, { owner: true });
+    r("webhooks/send", async ({ params, device }) => {
+      let res;
+      try { res = await webhooks.send(A.cfg(), { id: String(params.id || ""), confirm: params.confirm === true, title: params.title, text: params.text, kind: params.kind, to: params.to, test: !!params.test }); } catch (e) { throw cloudErr(e); }
+      // Which connection and how much — never the text, never the address.
+      audit.log({ event: "webhook_sent", device: device?.name, detail: { connection: res.connection, host: res.host, chars: res.chars, test: !!params.test } });
+      A.emit("event", { type: "status", at: Date.now(), status: A.status() });
+      return { sent: res };
+    }, { owner: true });
+    r("write/generate", async ({ params, device }) => {
+      let out;
+      try { out = await writer.write(A.cfg(), { kind: String(params.kind || "other"), instructions: String(params.instructions || ""), tone: String(params.tone || ""), language: String(params.language || "") }); } catch (e) { throw cloudErr(e); }
+      audit.log({ event: "text_written", device: device?.name, detail: { kind: String(params.kind || "other"), provider: out.provider, chars: out.text.length } });
+      return out;
+    });
+    r("customer/answer", async ({ params, device }) => {
+      let out;
+      try { out = await knowledge.answer(A.cfg(), String(params.message || "")); } catch (e) { throw cloudErr(e); }
+      audit.log({ event: "customer_answer_drafted", device: device?.name, detail: { source: out.source, matched: out.matched } });
+      return out;
+    });
+    r("knowledge/get", async () => ({ knowledge: knowledge.load() }));
+    r("knowledge/save", async ({ params, device }) => {
+      let k;
+      try { k = knowledge.save(params.knowledge || {}); } catch (e) { throw cloudErr(e); }
+      audit.log({ event: "knowledge_saved", device: device?.name, detail: { entries: k.entries.length } });
+      return { knowledge: k };
+    }, { owner: true });
+
     r("devices/list", async () => ({ devices: A.devices.list() }));
     r("devices/pair-code", async ({ device }) => { const c = A.devices.createPairCode(); audit.log({ event: "pair_code_created", device: device.name }); return { ...c, urls: A.lanUrls() }; }, { owner: true });
     r("devices/revoke", async ({ params, device }) => {
@@ -146,9 +204,13 @@ class Server {
 
     r("projects/templates", async () => ({ templates: A.projects.templates() }));
     r("projects/list", async () => ({ projects: A.projects.list() }));
-    r("projects/plan", async ({ params }) => ({ task: await A.projects.plan(params) }));
+    // The project builder writes files and runs npm in its workspace: that is
+    // the computer, so isolation refuses it at the door.
+    const notIsolated = () => { const why = require("./isolation").blocks(A.cfg(), "project_builder"); if (why) throw httpError(403, "isolated", why); };
+    r("projects/plan", async ({ params }) => { notIsolated(); return { task: await A.projects.plan(params) }; });
     r("projects/get", async ({ params }) => { const t = A.projects.get(String(params.task_id || "")); if (!t) throw httpError(404, "unknown task"); return { task: t }; });
-    r("projects/run", async ({ params, device }) => { const res = A.projects.run(String(params.task_id || ""), { hash: String(params.hash || ""), device }); if (!res.ok) throw httpError(res.status, res.reason); return { task: res.task }; });
+    r("projects/run", async ({ params, device }) => {
+      notIsolated(); const res = A.projects.run(String(params.task_id || ""), { hash: String(params.hash || ""), device }); if (!res.ok) throw httpError(res.status, res.reason); return { task: res.task }; });
     r("projects/cancel", async ({ params }) => { const t = A.projects.cancel(String(params.task_id || "")); if (!t) throw httpError(404, "unknown task"); return { task: t }; });
 
     // --- voice -----------------------------------------------------------

@@ -126,6 +126,7 @@ export interface Status {
     cloud_providers: string;
     data_leaving_computer: string;
   };
+  isolation: boolean;
   devices: { connected: number; paired: number };
   voice: { state: VoiceState; enabled: boolean; microphone: boolean; paused: boolean; muted: boolean };
   alerts: { open: number; enabled: boolean };
@@ -145,7 +146,11 @@ export interface Settings {
   hotkeys: { emergencyStop: string };
   server: { port: number; lanEnabled: boolean };
   offlineMode: boolean;
-  ai: { provider: "auto" | "ollama" | "localai" | "mock"; ollamaUrl: string; localaiUrl: string; model: string; timeoutMs: number };
+  /** JARVIS may not touch this computer: only its own notes, reminders and drafts. */
+  isolation: boolean;
+  /** The optional Groq brain. The key itself is never in settings. */
+  groq: { enabled: boolean; model: string };
+  ai: { provider: "auto" | "groq" | "ollama" | "localai" | "mock"; ollamaUrl: string; localaiUrl: string; model: string; timeoutMs: number };
   approvedFolders: string[];
   extraApps: { id: string; title?: string; path: string }[];
   allowedUrlHosts: string[];
@@ -255,9 +260,69 @@ export interface AiCli {
   error: string | null;
 }
 
+export interface GroqStatus {
+  configured: boolean;
+  enabled: boolean;
+  usable: boolean;
+  reason: string | null;
+  model: string;
+  calls: number;
+  last_error: string | null;
+  from_env: boolean;
+}
+
+export type WebhookApp = "google_docs" | "gmail" | "google_sheets" | "google_calendar" | "spotify" | "whatsapp" | "other";
+
+/** A connection as the window sees it: never its address, only the host. */
+export interface WebhookInfo {
+  id: string;
+  name: string;
+  app: WebhookApp;
+  service: string;
+  host: string;
+}
+
+export interface CloudView {
+  isolation: boolean;
+  groq: GroqStatus;
+  webhooks: WebhookInfo[];
+  apps: WebhookApp[];
+  usage: { groqCalls: number; groqLastError: string | null; groqLastAt: number | null; webhookSends: number; webhookLastAt: number | null };
+  offline_mode: boolean;
+}
+
+export interface KnowledgeEntry {
+  id: string;
+  q: string;
+  a: string;
+}
+
+export interface Knowledge {
+  business: string;
+  fallback: string;
+  entries: KnowledgeEntry[];
+}
+
+export interface CustomerAnswer {
+  answer: string;
+  source: "groq" | "rules";
+  model: string | null;
+  matched: string | null;
+  draft: true;
+  note?: string | null;
+}
+
+export type WriteKind = "email" | "message" | "post" | "doc" | "code" | "other";
+
+export interface WriteResult {
+  text: string;
+  provider: string;
+  model: string | null;
+}
+
 export interface AiStatus {
-  detected: { ollama: AiProvider; localai: AiProvider; cli?: AiCli };
-  active: { provider: "cli" | "ollama" | "localai" | "mock"; model: string | null; reason: string; binary?: string };
+  detected: { ollama: AiProvider; localai: AiProvider; cli?: AiCli; groq?: GroqStatus };
+  active: { provider: "groq" | "cli" | "ollama" | "localai" | "mock"; model: string | null; reason: string; binary?: string };
   mock_mode: boolean;
   capability_warning: string;
   settings: Settings["ai"];

@@ -38,7 +38,10 @@ test("the recording only ever goes to the local agent", () => {
     const code = stripComments(text);
     // Any absolute URL in the client would be a request to something other than
     // the agent that served the page.
-    const urls = [...code.matchAll(/["'`](https?:\/\/[^"'`]+)["'`]/g)].map((m) => m[1]);
+    // One exception, by name: the "Open in WhatsApp" link in the writing
+    // agent. It is a link the person clicks, opened in their browser, carrying
+    // only the text they chose — not a request the page makes.
+    const urls = [...code.matchAll(/["'`](https?:\/\/[^"'`]+)["'`]/g)].map((m) => m[1]).filter((u) => !(path.basename(f) === "WriterPanel.tsx" && u.startsWith("https://wa.me/${")));
     assert.deepEqual(urls, [], `${path.basename(f)} contains an absolute URL: ${urls.join(", ")}`);
   }
 });

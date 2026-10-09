@@ -77,7 +77,7 @@ export function DraftsPanel() {
 
   return (
     <Dialog title="Customer drafts" onClose={() => { setPanel(null); }} wide>
-      <p className="banner banner-warn">{label}. JARVIS has no sending adapters at all — no email, no WhatsApp, no SMS, no social media. You copy or export a draft and send it yourself, through whatever you already use.</p>
+      <p className="banner banner-warn">{label}. JARVIS never sends a draft by itself. You copy or export it and send it yourself — or, if you have added a connection in Connections, press Send there; nothing goes out any other way.</p>
       {error && (
         <p role="alert" className="error-text">
           {error}
