@@ -32,6 +32,13 @@ const FORBIDDEN = [
   [/google-analytics|googletagmanager|segment\.io|mixpanel|sentry\.io/i, "telemetry"],
   [/workers\.dev|wrangler|cloudflare/i, "cloud relay"],
 ];
+// Allowed in exactly one file each: the optional Groq brain (free plan, off
+// until a key is added) and the webhook host allow-list. Anywhere else these
+// would be a second, unreviewed way out of the computer.
+const CONFINED = [
+  [/api\.groq\.com/i, "Groq endpoint", join("desktop", "src", "core", "cloud", "groq.js")],
+  [/make\.com|n8n\.cloud|hooks\.zapier\.com|pipedream\.net/i, "webhook host", join("desktop", "src", "core", "cloud", "webhooks.js")],
+];
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "assets", "docs", ".venv"]);
 
 function walk(dir, acc = []) {
@@ -56,11 +63,23 @@ for (const file of walk(ROOT)) {
     const m = re.exec(text);
     if (m) hits.push(`${rel}: ${label} (${m[0]})`);
   }
+  // Prose may name these services; code may only call them from their file.
+  // Agent code only: the page cannot reach the internet (it talks to the
+  // agent that served it, and a test pins that), so its help text may name
+  // these services freely.
+  if (/\.(js|mjs|cjs)$/.test(rel) && (rel.startsWith("desktop") || rel.startsWith("scripts"))) {
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
+    for (const [re, label, home] of CONFINED) {
+      if (rel === home) continue;
+      const m = re.exec(code);
+      if (m) hits.push(`${rel}: ${label} outside ${home} (${m[0]})`);
+    }
+  }
 }
 if (hits.length) {
   failed++;
   console.log(`${C.red}FAIL${C.r}\n` + hits.map((h) => "  " + h).join("\n"));
-} else console.log(`${C.g}pass${C.r} ${C.dim}(no cloud endpoint, credential, payment or telemetry reference in shipped code)${C.r}`);
+} else console.log(`${C.g}pass${C.r} ${C.dim}(no cloud endpoint, credential, payment or telemetry reference; Groq and webhook hosts only in their own files)${C.r}`);
 
 step("agent tests", "npm", ["--prefix", "desktop", "test"]);
 step("client typecheck", "npm", ["--prefix", "client", "run", "typecheck"]);

@@ -10,7 +10,7 @@ const { buildRegistry } = require("../src/core/tools");
 const { validateUrl } = require("../src/core/tools/apps");
 
 paths.ensureDirs();
-const cfg = { approvedFolders: [paths.WORKSPACE], allowedUrlHosts: ["example.com", "localhost"] };
+const cfg = { isolation: false, approvedFolders: [paths.WORKSPACE], allowedUrlHosts: ["example.com", "localhost"] };
 const reg = buildRegistry();
 
 test("paths outside approved folders, secrets and traversal are refused", () => {

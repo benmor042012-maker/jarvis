@@ -10,7 +10,7 @@ import type { AgentEvent, CallRequest, CustomerAlert, DeviceCreds, DeviceInfo, H
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "busy" | "approval" | "success" | "error" | "offline" | "emergency";
 export type Connection = "connecting" | "online" | "offline" | "unpaired" | "unauthorized";
-export type Panel = null | "status" | "devices" | "tools" | "audit" | "projects" | "drafts" | "settings" | "voice" | "alerts" | "phone";
+export type Panel = null | "status" | "devices" | "tools" | "audit" | "projects" | "drafts" | "settings" | "voice" | "alerts" | "phone" | "writer" | "connections";
 export type LogKind = "user" | "assistant" | "action" | "system" | "error" | "warn";
 
 export interface LogEntry {

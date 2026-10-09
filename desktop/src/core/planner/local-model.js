@@ -1,8 +1,11 @@
-// Local model adapter: Ollama or LocalAI on this computer / LAN only. No API
-// keys, no cloud. Detection is cached briefly; planning asks for a JSON plan
-// that is then validated against the tool registry like any other plan.
+// Model adapter: Ollama or LocalAI on this computer / LAN, or Groq on its free
+// plan once a key is added in Connections (cloud/groq.js — the only place a
+// prompt can leave this computer). Detection is cached briefly; planning asks
+// for a JSON plan that is then validated against the tool registry like any
+// other plan.
 const { isPrivateHost } = require("../util");
 const cli = require("./ollama-cli");
+const groq = require("../cloud/groq");
 
 const CAPABILITY_WARNING = "Local models are smaller than hosted assistants: they can misunderstand, hallucinate tool arguments and are slower. Every plan is validated and shown before anything runs; if the model misbehaves, switch to the rule planner (MOCK MODE) or a different model.";
 
@@ -41,6 +44,7 @@ async function detect(cfg, { force = false } = {}) {
     cli: { binary: null, available: false, models: [], error: null },
     ollama: { url: cfg.ai.ollamaUrl, available: false, models: [], error: null },
     localai: { url: cfg.ai.localaiUrl, available: false, models: [], error: null },
+    groq: groq.status(cfg),
   };
   try {
     const binary = cli.findOllama();
@@ -85,6 +89,13 @@ async function resolve(cfg) {
     return out;
   };
   if (pref === "mock") return { provider: "mock", model: null, reason: "rule planner selected in settings" };
+  // Groq is chosen whenever a key has been added (and it is not switched off
+  // or offline): that is the only reason anyone adds one.
+  const groqWhy = groq.unusable(cfg);
+  if (pref === "groq" || (pref === "auto" && !groqWhy)) {
+    if (!groqWhy) return { provider: "groq", model: groq.modelFor(cfg), reason: "Groq (free plan)" };
+    if (pref === "groq") return { provider: "mock", model: null, reason: `Groq is not available (${groqWhy}); using the rule planner (MOCK MODE)` };
+  }
   // "ollama" means the local Ollama either way: the program first, the socket
   // it also listens on as the fallback for an installation this cannot find.
   if (pref === "ollama") return pick("cli") || pick("ollama") || { provider: "mock", model: null, reason: `Ollama is not available (${d.cli.error || d.ollama.error || "no models installed"}); using the rule planner (MOCK MODE)` };
@@ -95,7 +106,7 @@ async function resolve(cfg) {
 function systemPrompt(tools, language) {
   const lines = tools.map((t) => `- ${t.name} (risk ${t.risk}): ${t.description} params=${JSON.stringify(t.schema.properties || {})}${t.schema.required ? " required=" + JSON.stringify(t.schema.required) : ""}`);
   const he = language === "he";
-  return `You are JARVIS, a fast and practical personal assistant on this computer. You PLAN actions; you never execute them yourself.
+  return `You are JARVIS, a fast and practical personal assistant. You PLAN actions; you never execute them yourself.
 Reply with ONE JSON object only: {"message": string, "actions": [{"tool": string, "params": object}]}
 
 How to answer:
@@ -153,7 +164,27 @@ function partialMessage(text) {
 async function modelPlan(cfg, { provider, model, binary }, command, tools, { signal, onPartial } = {}) {
   const sys = systemPrompt(tools, cfg.language);
   let content;
-  if (provider === "cli") {
+  if (provider === "groq") {
+    let shown = "";
+    content = await groq.chat(cfg, {
+      system: sys,
+      user: command,
+      json: true,
+      maxTokens: 600,
+      temperature: 0.1,
+      timeoutMs: Math.min(cfg.ai.timeoutMs, 30000),
+      signal,
+      onToken: onPartial
+        ? (_piece, all) => {
+            const msg = partialMessage(all);
+            if (msg && msg.length > shown.length) {
+              shown = msg;
+              onPartial(msg);
+            }
+          }
+        : undefined,
+    });
+  } else if (provider === "cli") {
     // The program, on stdin, streamed back. Nothing over the network at all.
     let shown = "";
     const r = await cli.askCompat({
@@ -195,6 +226,9 @@ async function modelPlan(cfg, { provider, model, binary }, command, tools, { sig
 
 // Free-form generation (drafts, project files). Returns a string.
 async function generate(cfg, { provider, model, binary }, system, prompt, { signal, json = false, onPartial } = {}) {
+  if (provider === "groq") {
+    return groq.chat(cfg, { system, user: prompt, json, maxTokens: 1500, temperature: 0.3, timeoutMs: Math.min(cfg.ai.timeoutMs, 60000), signal, onToken: onPartial ? (piece) => onPartial(piece) : undefined });
+  }
   if (provider === "cli") {
     const r = await cli.askCompat({ binary, model, json, timeoutMs: cfg.ai.timeoutMs, signal, prompt: `${system}\n\n${prompt}`, onToken: onPartial ? (chunk) => onPartial(chunk) : undefined });
     return r.text;

@@ -7,6 +7,7 @@ import { Dashboard } from "./components/Dashboard";
 import { PairingScreen } from "./components/PairingScreen";
 import { AlertsPanel } from "./panels/AlertsPanel";
 import { AuditPanel } from "./panels/AuditPanel";
+import { ConnectionsPanel } from "./panels/ConnectionsPanel";
 import { DevicesPanel } from "./panels/DevicesPanel";
 import { DraftsPanel } from "./panels/DraftsPanel";
 import { PhonePanel } from "./panels/PhonePanel";
@@ -15,6 +16,7 @@ import { SettingsPanel } from "./panels/SettingsPanel";
 import { StatusPanel } from "./panels/StatusPanel";
 import { ToolsPanel } from "./panels/ToolsPanel";
 import { VoicePanel } from "./panels/VoicePanel";
+import { WriterPanel } from "./panels/WriterPanel";
 import { useDesktopHost } from "./hooks/useDesktopHost";
 import { useJarvis } from "./state/jarvisStore";
 
@@ -48,6 +50,8 @@ export default function App() {
       {panel === "voice" && <VoicePanel />}
       {panel === "alerts" && <AlertsPanel />}
       {panel === "phone" && <PhonePanel />}
+      {panel === "writer" && <WriterPanel />}
+      {panel === "connections" && <ConnectionsPanel />}
     </div>
   );
 }

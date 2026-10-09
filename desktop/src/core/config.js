@@ -1,5 +1,5 @@
-// Runtime settings. No secrets live here: there are no API keys in this
-// product. Device secrets are in devices.js (optionally OS-encrypted).
+// Runtime settings. No secrets live here: the optional Groq key and webhook
+// addresses are in secrets.json (secrets.js), device secrets in devices.js.
 const paths = require("./paths");
 
 const MODES = ["safe", "assistant", "advanced"];
@@ -15,8 +15,15 @@ const DEFAULTS = {
   hotkeys: { emergencyStop: "CommandOrControl+Shift+Escape" },
   server: { port: 8765, lanEnabled: false },
   offlineMode: false,
+  // Isolation (isolation.js): JARVIS may not run programs, shells or scripts,
+  // or touch files, input, the screen, the clipboard or the browser — only its
+  // own notes, reminders and drafts. On by default; Connections switches it.
+  isolation: true,
+  // Groq, the optional fast brain on its free plan. Used only once a key is
+  // added in Connections; until then nothing here does anything.
+  groq: { enabled: true, model: "" },
   ai: {
-    provider: "auto", // auto | ollama | localai | mock
+    provider: "auto", // auto | groq | ollama | localai | mock
     ollamaUrl: "http://127.0.0.1:11434",
     localaiUrl: "http://127.0.0.1:8080",
     model: "",
@@ -211,7 +218,16 @@ function sanitizePartial(partial) {
         if (!/^https?:$/.test(u.protocol) || !isPrivateHost(u.hostname)) throw new Error(`${key} must point to this computer or the local network (no cloud endpoints)`);
       }
     }
-    if (p.ai.provider !== undefined && !["auto", "ollama", "localai", "mock"].includes(p.ai.provider)) throw new Error("ai.provider is invalid");
+    if (p.ai.provider !== undefined && !["auto", "groq", "ollama", "localai", "mock"].includes(p.ai.provider)) throw new Error("ai.provider is invalid");
+  }
+  if (p.isolation !== undefined) p.isolation = !!p.isolation;
+  if (p.groq) {
+    if (p.groq.enabled !== undefined) p.groq.enabled = !!p.groq.enabled;
+    if (p.groq.model !== undefined) {
+      const m = String(p.groq.model).trim();
+      if (m && !/^[\w.:/-]{2,80}$/.test(m)) throw new Error("groq.model must be a model name like llama-3.1-8b-instant");
+      p.groq.model = m;
+    }
   }
   return p;
 }

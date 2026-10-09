@@ -104,9 +104,13 @@ test("emergency stop kills running work and refuses everything until cleared", a
   void approve;
 });
 
-test("nothing is ever sent: no send route, no adapter, drafts are files only", async () => {
-  const routes = [...agent.server.routes.keys()];
-  assert.ok(!routes.some((r) => /send|smtp|whatsapp|telegram|sms/i.test(r)), routes.join(","));
+test("nothing is sent by itself: one owner-only send route, no tool can send, drafts are files only", async () => {
+  // The single way out is the webhook Send button: an owner-only route that
+  // also demands confirm: true. No other route and no tool can send anything.
+  const routes = [...agent.server.routes.entries()];
+  const senders = routes.filter(([r]) => /send|smtp|whatsapp|telegram|sms/i.test(r));
+  assert.deepEqual(senders.map(([r]) => r), ["webhooks/send"], senders.map(([r]) => r).join(","));
+  assert.equal(senders[0][1].owner, true, "sending is owner-only");
   const tools = agent.registry.list({ cfg: agent.cfg() }).map((t) => t.name);
   assert.ok(!tools.some((t) => /send|smtp|whatsapp|telegram|sms/i.test(t)), tools.join(","));
   const d = await c.call("drafts/create", { recipient: "a@b.c", purpose: "thanks", language: "en", name: "A" });
@@ -115,7 +119,7 @@ test("nothing is ever sent: no send route, no adapter, drafts are files only", a
   assert.equal(status.body.cost_network.outgoing_messages, 0);
 });
 
-test("no provider configured: there is nowhere to configure one", async () => {
+test("no secret ever appears in settings, even though a Groq key can be added", async () => {
   const s = await c.call("settings/get");
   const text = JSON.stringify(s.body.settings);
   assert.ok(!/api[_-]?key|token|secret|password/i.test(text), text);

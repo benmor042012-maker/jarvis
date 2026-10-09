@@ -33,6 +33,10 @@ class ToolRegistry {
   }
 
   availability(tool, ctx = {}) {
+    // Isolation first: a tool it forbids is unavailable on every platform,
+    // whatever else is true. Without a config passed in, the saved one decides.
+    const isolated = require("./isolation").blocks(ctx.cfg || require("./config").load(), tool.name);
+    if (isolated) return { ok: false, reason: isolated, isolated: true };
     if (tool.platforms && !tool.platforms.includes(os.platform())) {
       return { ok: false, reason: `Only available on ${tool.platforms.map(platformLabel).join("/")}; this computer runs ${platformLabel(os.platform())}.` };
     }
